@@ -79,7 +79,7 @@ qdrant_client, llm_client = carregar_cerebro_e_executor()
 # --- 4. INTERFACE DA BARRA LATERAL (SIDEBAR) ---
 
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/128/10573/10573788.png", width=80)
+    st.image("logo.png", width=80)
     st.title("Perfil do Cliente")
     st.markdown("O Agente usará este perfil para todas as consultas.")
     
