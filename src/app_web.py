@@ -79,7 +79,7 @@ qdrant_client, llm_client = carregar_cerebro_e_executor()
 # --- 4. INTERFACE DA BARRA LATERAL (SIDEBAR) ---
 
 with st.sidebar:
-    st.image("logo.png", width=80)
+    st.image("https://github.com/ismaelcavalcante/agente-fiscal-app/blob/main/assets/logo.png", width=80)
     st.title("Perfil do Cliente")
     st.markdown("O Agente usará este perfil para todas as consultas.")
     
