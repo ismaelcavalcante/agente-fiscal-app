@@ -11,8 +11,8 @@ if "db_count" not in st.session_state:
 
 # --- Constantes ---
 NOME_DA_COLECAO = "leis_fiscais_v1"
-MODELO_EMBEDDING = st.secrets["MODELO_EMBEDDING"]
-OPENAI_MODEL=st.secrets["OPENAI_MODEL"]
+MODELO_EMBEDDING = st.secrets['MODELO_EMBEDDING']
+OPENAI_MODEL=st.secrets['OPENAI_MODEL']
 
 
 # --- 1. CONFIGURAÇÃO (LENDO st.secrets) ---
@@ -24,14 +24,14 @@ def carregar_cerebro_e_executor():
     try:
         # 1. Conectar ao Qdrant
         qdrant_client = QdrantClient(
-            url=st.secrets["QDRANT_URL"], 
-            api_key=st.secrets["QDRANT_API_KEY"]
+            url=st.secrets['QDRANT_URL'], 
+            api_key=st.secrets['QDRANT_API_KEY']
         )
         print("✅ Cérebro (Qdrant Cloud) carregado.")
 
         # 2. Conectar ao LLM
         llm_client = OpenAI(
-            api_key=st.secrets["OPENAI_API_KEY"]
+            api_key=st.secrets['OPENAI_API_KEY']
         )
         print("✅ Executor (OpenAI LLM) conectado.")
 
