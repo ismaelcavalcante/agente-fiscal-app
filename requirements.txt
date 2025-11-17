@@ -1,0 +1,12 @@
+# Core do Projeto
+docling
+openai
+streamlit
+qdrant-client
+
+# Fase 1: Radar (Scraping)
+requests
+beautifulsoup4
+
+# Utilitários
+python-dotenv  # Para carregar a API Key do .env
