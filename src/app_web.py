@@ -9,6 +9,10 @@ if "db_count" not in st.session_state:
     st.session_state.db_count = -1  # Usamos -1 para significar "não verificado"
 # ----------------------------------------------------
 
+# --- CORREÇÃO: MOVER ESTES BLOCOS PARA O TOPO ---
+# st.set_page_config DEVE ser o primeiro comando Streamlit.
+st.set_page_config(layout="wide")
+
 # --- Constantes ---
 NOME_DA_COLECAO = "leis_fiscais_v1"
 MODELO_EMBEDDING = st.secrets['MODELO_EMBEDDING']
@@ -62,7 +66,7 @@ qdrant_client, llm_client = carregar_cerebro_e_executor()
 
 # --- 2. INTERFACE WEB (STREAMLIT) ---
 
-st.set_page_config(layout="wide")
+
 st.title("🤖 Agente Fiscal v2.0 (Qdrant Engine)")
 st.markdown(f"Alimentado com a **EC 132** e **LC 214**. Fatias no Cérebro: **{st.session_state.get('db_count', 0)}**")
 
