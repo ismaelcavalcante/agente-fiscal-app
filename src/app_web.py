@@ -2,43 +2,58 @@ import streamlit as st
 from openai import OpenAI
 from qdrant_client import QdrantClient
 
-# --- 0. Constantes ---
+# --- 0. GARANTIR A INICIALIZAÇÃO DO SESSION STATE ---
+# Esta é a correção principal. Nós garantimos que 'db_count'
+# sempre exista, mesmo antes de tentar a conexão.
+if "db_count" not in st.session_state:
+    st.session_state.db_count = -1  # Usamos -1 para significar "não verificado"
+# ----------------------------------------------------
+
+# --- Constantes ---
 NOME_DA_COLECAO = "leis_fiscais_v1"
 MODELO_EMBEDDING = st.secrets["MODELO_EMBEDDING"]
 OPENAI_MODEL=st.secrets["OPENAI_MODEL"]
 
 
-# --- 1. CONFIGURAÇÃO (AGORA COM CACHE) ---
+# --- 1. CONFIGURAÇÃO (LENDO st.secrets) ---
 
 @st.cache_resource
 def carregar_cerebro_e_executor():
-    """Conecta ao Qdrant e ao LLM da OpenAI."""
+    """Conecta ao Qdrant e ao LLM da OpenAI usando st.secrets."""
     print("Conectando aos serviços...")
     try:
-        # Conecta ao Qdrant (serviço 'qdrant' no docker-compose)
+        # 1. Conectar ao Qdrant
         qdrant_client = QdrantClient(
             url=st.secrets["QDRANT_URL"], 
             api_key=st.secrets["QDRANT_API_KEY"]
         )
-        print("✅ Cérebro (Qdrant) carregado.")
-        
-        # Conecta ao LLM
-        llm_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        print("✅ Cérebro (Qdrant Cloud) carregado.")
+
+        # 2. Conectar ao LLM
+        llm_client = OpenAI(
+            api_key=st.secrets["OPENAI_API_KEY"]
+        )
         print("✅ Executor (OpenAI LLM) conectado.")
-        
-        # Verifica se a coleção existe
+
+        # 3. Verificar contagem (só se as conexões funcionarem)
         try:
             count = qdrant_client.count(collection_name=NOME_DA_COLECAO, exact=True)
             st.session_state.db_count = count.count
         except Exception as e:
-            st.session_state.db_count = 0
-            st.error(f"Coleção '{NOME_DA_COLECAO}' não encontrada no Qdrant! Você já rodou o 'processador.py'?")
-            print(e)
+            st.session_state.db_count = 0 # DB conectado, mas coleção vazia
+            st.error(f"Coleção '{NOME_DA_COLECAO}' não encontrada no Qdrant! Você 'encheu' o Cérebro na Nuvem?")
+            print(f"Erro Qdrant: {e}")
 
         return qdrant_client, llm_client
+    
+    except KeyError as e:
+        st.error(f"Erro: A 'Secret' {e} não foi definida no painel do Streamlit Cloud!")
+        st.session_state.db_count = -2 # Código de erro: Secret faltando
+        return None, None
     except Exception as e:
         print(f"❌ Erro na inicialização: {e}")
         st.error(f"Erro fatal ao conectar aos serviços: {e}")
+        st.session_state.db_count = -3 # Código de erro: Outra falha de conexão
         return None, None
 
 # Carrega os serviços
@@ -77,78 +92,87 @@ with col1:
 with col2:
     st.subheader("3. Resposta do Agente")
     
-    if run_button and llm_client and qdrant_client and st.session_state.db_count > 0:
-        with st.spinner("Analisando... (Isso pode levar até 30 segundos)"):
-            try:
-                # --- 3. LÓGICA RAG (QDRANT) ---
-                
-                # ETAPA DE RECUPERAÇÃO (RAG)
-                print("Iniciando consulta RAG...")
-                query_text = f"Perfil: {perfil_cliente}\nPergunta: {pergunta_cliente}"
-                
-                # 1. Criar o vetor da *pergunta* do usuário
-                print("Criando vetor para a pergunta...")
-                embedding_response = llm_client.embeddings.create(
-                    input=query_text,
-                    model=MODELO_EMBEDDING
-                )
-                query_vector = embedding_response.data[0].embedding
-                
-                # 2. Buscar no Qdrant pelo vetor mais próximo
-                print("Buscando no Qdrant...")
-                resultados = qdrant_client.search(
-                    collection_name=NOME_DA_COLECAO,
-                    query_vector=query_vector,
-                    limit=7  # Pede os 7 chunks mais relevantes
-                )
-                
-                # O Qdrant retorna os 'payloads' (metadados)
-                contexto_juridico = "\n---\n".join(
-                    [hit.payload['texto'] for hit in resultados]
-                )
-                print(f"Contexto RAG recuperado ({len(resultados)} fatias).")
+    # --- LÓGICA DE EXIBIÇÃO CORRIGIDA ---
+    # Nós reestruturamos este bloco 'if/else' para ser mais claro
+    # e para usar o método .get() que é mais seguro.
+    
+    db_count = st.session_state.get('db_count', -1) # Pega o valor com segurança
 
-                # ETAPA DE GERAÇÃO (LLM) - (Idêntica a antes)
-                PROMPT_MESTRE = """
-                Você é o "IA Fiscal Advisor", um consultor tributário Sênior.
-                Responda a pergunta do cliente com base *exclusivamente* no Perfil do Cliente e no Contexto Jurídico (fatias das leis) fornecido.
-                Seja direto, claro e cite os artigos ou seções do contexto que fundamentam sua resposta.
-                """
-                
-                prompt_usuario = f"""
-                **Perfil do Cliente:**
-                {perfil_cliente}
+    if run_button:
+        # O botão FOI clicado
+        if llm_client and qdrant_client and db_count > 0:
+            with st.spinner("Analisando... (Isso pode levar até 30 segundos)"):
+                try:
+                    # --- 3. LÓGICA RAG (QDRANT) ---
+                    print("Iniciando consulta RAG...")
+                    query_text = f"Perfil: {perfil_cliente}\nPergunta: {pergunta_cliente}"
+                    
+                    print("Criando vetor para a pergunta...")
+                    embedding_response = llm_client.embeddings.create(
+                        input=query_text,
+                        model=MODELO_EMBEDDING
+                    )
+                    query_vector = embedding_response.data[0].embedding
+                    
+                    print("Buscando no Qdrant...")
+                    resultados = qdrant_client.search(
+                        collection_name=NOME_DA_COLECAO,
+                        query_vector=query_vector,
+                        limit=7
+                    )
+                    
+                    contexto_juridico = "\n---\n".join(
+                        [hit.payload['texto'] for hit in resultados]
+                    )
+                    print(f"Contexto RAG recuperado ({len(resultados)} fatias).")
 
-                **Pergunta do Cliente:**
-                "{pergunta_cliente}"
+                    # --- ETAPA DE GERAÇÃO (LLM) ---
+                    PROMPT_MESTRE = """
+                    Você é o "IA Fiscal Advisor", um consultor tributário Sênior.
+                    Responda a pergunta do cliente com base *exclusivamente* no Perfil do Cliente e no Contexto Jurídico (fatias das leis) fornecido.
+                    Seja direto, claro e cite os artigos ou seções do contexto que fundamentam sua resposta.
+                    """
+                    
+                    prompt_usuario = f"""
+                    **Perfil do Cliente:**
+                    {perfil_cliente}
 
-                **Contexto Jurídico Recuperado da Base (Use APENAS isso):**
-                ---
-                {contexto_juridico}
-                ---
+                    **Pergunta do Cliente:**
+                    "{pergunta_cliente}"
 
-                **Sua Resposta (seja direto e fundamente no contexto):**
-                """
-                
-                print("Enviando para o LLM...")
-                completion = llm_client.chat.completions.create(
-                    model=OPENAI_MODEL,
-                    temperature=0.0,
-                    messages=[
-                        {"role": "system", "content": PROMPT_MESTRE},
-                        {"role": "user", "content": prompt_usuario}
-                    ]
-                )
-                
-                resposta_final = completion.choices[0].message.content
-                st.markdown(resposta_final)
-                
-                with st.expander("Ver fontes (payloads) usadas pelo RAG"):
-                    st.json([hit.payload for hit in resultados])
+                    **Contexto Jurídico Recuperado da Base (Use APENAS isso):**
+                    ---
+                    {contexto_juridico}
+                    ---
 
-            except Exception as e:
-                st.error(f"Erro durante a execução: {e}")
-    elif st.session_state.db_count == 0:
-        st.error("O Cérebro (Qdrant) está vazio. Rode o `processador.py` primeiro!")
+                    **Sua Resposta (seja direto e fundamente no contexto):**
+                    """
+                    
+                    print("Enviando para o LLM...")
+                    completion = llm_client.chat.completions.create(
+                        model=OPENAI_MODEL,
+                        temperature=0.0,
+                        messages=[
+                            {"role": "system", "content": PROMPT_MESTRE},
+                            {"role": "user", "content": prompt_usuario}
+                        ]
+                    )
+                    
+                    resposta_final = completion.choices[0].message.content
+                    st.markdown(resposta_final)
+                    
+                    with st.expander("Ver fontes (payloads) usadas pelo RAG"):
+                        st.json([hit.payload for hit in resultados])
+
+                except Exception as e:
+                    st.error(f"Erro durante a execução: {e}")
+        
+        elif db_count == 0:
+            st.error("O Cérebro (Qdrant) está vazio. Verifique se o 'processador.py' foi executado corretamente.")
+        else:
+            # Se chegou aqui, é porque llm_client ou qdrant_client falharam na conexão
+            st.error("Erro de conexão. Verifique suas 'Secrets' no painel do Streamlit Cloud e recarregue a página.")
+    
     else:
+        # O botão NÃO foi clicado. A página está apenas esperando.
         st.info("Preencha o perfil e a pergunta, depois clique em 'Executar Análise'.")
