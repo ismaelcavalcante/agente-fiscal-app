@@ -1,16 +1,11 @@
 import streamlit as st
-import os
-from dotenv import load_dotenv
 from openai import OpenAI
 from qdrant_client import QdrantClient
 
-# Carrega as variáveis de ambiente
-load_dotenv()
-
 # --- 0. Constantes ---
 NOME_DA_COLECAO = "leis_fiscais_v1"
-MODELO_EMBEDDING = os.environ.get("MODELO_EMBEDDING")
-OPENAI_MODEL=os.environ.get("OPENAI_MODEL")
+MODELO_EMBEDDING = st.secrets["MODELO_EMBEDDING"]
+OPENAI_MODEL=st.secrets["OPENAI_MODEL"]
 
 
 # --- 1. CONFIGURAÇÃO (AGORA COM CACHE) ---
@@ -22,8 +17,8 @@ def carregar_cerebro_e_executor():
     try:
         # Conecta ao Qdrant (serviço 'qdrant' no docker-compose)
         qdrant_client = QdrantClient(
-            url=os.environ.get("QDRANT_URL"), 
-            api_key=os.environ.get("QDRANT_API_KEY")
+            url=st.secrets["QDRANT_URL"], 
+            api_key=st.secrets["QDRANT_API_KEY"]
         )
         print("✅ Cérebro (Qdrant) carregado.")
         
