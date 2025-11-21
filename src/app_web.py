@@ -10,9 +10,8 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langfuse import Langfuse
-from dotenv import load_dotenv
 
-from .protocol import ConsultaContext, FonteDocumento # Importa o MCP
+from .protocol import ConsultaContext, FonteDocumento
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA E INICIALIZAÇÃO DE ESTADO ---
 st.set_page_config(
@@ -34,24 +33,12 @@ if "client_profile" not in st.session_state:
 if "thread_id" not in st.session_state:
     st.session_state.thread_id = "1" 
 
-load_dotenv()
-
 # --- Constantes de Serviço ---
 NOME_DA_COLECAO = "leis_fiscais_v1"
-OPENAI_API_KEY=st.secrets["OPENAI_API_KEY"]
-MODELO_LLM =st.secrets["MODELO_LLM"]
-MODELO_EMBEDDING=st.secrets["MODELO_EMBEDDING"]
-QDRANT_URL=st.secrets["QDRANT_URL"]
-QDRANT_API_KEY=st.secrets["QDRANT_API_KEY"]
-TAVILY_API_KEY = st.secrets["TAVILY_API_KEY"]
-LANGFUSE_PUBLIC_KEY = st.secrets["LANGFUSE_PUBLIC_KEY"]
-LANGFUSE_SECRET_KEY = st.secrets["LANGFUSE_SECRET_KEY"]
-LANGFUSE_BASE_URL = st.secrets["LANGFUSE_BASE_URL"]
+# Os valores das Secrets são lidos DENTRO da função cache abaixo.
+# NENHUMA LEITURA DE SECRETS FORA DAS FUNÇÕES!
 
-
-
-
-# --- 2. DEFINIÇÃO DE ESTADO DO LANGGRAPH ---
+# --- 2. DEFINIÇÃO DE ESTADO DO LANGGRAPH (MANTIDA) ---
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], lambda x, y: x + y]
     perfil_cliente: str
@@ -62,13 +49,27 @@ class AgentState(TypedDict):
 @st.cache_resource
 def carregar_servicos_e_grafo():
     try:
+        # --- CARREGAMENTO CORRETO DAS SECRETS (DENTRO DA FUNÇÃO) ---
+        # Definimos os valores que vamos usar a partir do st.secrets
+        OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+        MODELO_LLM = st.secrets["MODELO_LLM"]
+        MODELO_EMBEDDING = st.secrets["MODELO_EMBEDDING"]
+        QDRANT_URL = st.secrets["QDRANT_URL"]
+        QDRANT_API_KEY = st.secrets["QDRANT_API_KEY"]
+        TAVILY_API_KEY = st.secrets["TAVILY_API_KEY"]
+        LANGFUSE_PUBLIC_KEY = st.secrets["LANGFUSE_PUBLIC_KEY"]
+        LANGFUSE_SECRET_KEY = st.secrets["LANGFUSE_SECRET_KEY"]
+        LANGFUSE_BASE_URL = st.secrets["LANGFUSE_BASE_URL"]
+        
+        # -----------------------------------------------------------
+
         # Validar Secrets e carregar clientes
         llm = ChatOpenAI(api_key=OPENAI_API_KEY, model=MODELO_LLM, temperature=0)
         embeddings = OpenAIEmbeddings(api_key=OPENAI_API_KEY, model=MODELO_EMBEDDING)
         qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
         
         # Langfuse
-        os.environ["TAVILY_API_KEY"] = TAVILY_API_KEY
+        os.environ["TAVILY_API_KEY"] = TAVILY_API_KEY # Necessário para a ferramenta Tavily
         langfuse = Langfuse(public_key=LANGFUSE_PUBLIC_KEY, secret_key=LANGFUSE_SECRET_KEY, host=LANGFUSE_BASE_URL)
 
         # Configuração do Retriever (Qdrant) com Filtro de Metadados
@@ -82,123 +83,102 @@ def carregar_servicos_e_grafo():
         # Ferramenta de Web Search
         web_search_tool = TavilySearchResults(max_results=3)
 
-    except Exception as e:
-        print(f"Erro ao carregar serviços: {e}")
-        st.error(f"Erro de Conexão. Verifique suas 6 Secrets. Detalhe: {e}")
-        return None, None
-
-    # --- NÓS DO LANGGRAPH (Lógica de Decisão) ---
-    def roteador_de_ferramentas(state: AgentState) -> str:
-        messages = state["messages"]
-        last_message = messages[-1]
-        tool_router_llm = llm.bind_tools([retriever_biblioteca, web_search_tool])
-        response = tool_router_llm.invoke(f"Perfil do Cliente: {state['perfil_cliente']}\n\nPergunta: {last_message.content}")
-        
-        if not response.tool_calls:
-            return "gerar_resposta_sem_contexto"
+        # --- NÓS DO LANGGRAPH (MANTIDOS IGUAIS) ---
+        def roteador_de_ferramentas(state: AgentState) -> str:
+            messages = state["messages"]
+            last_message = messages[-1]
+            tool_router_llm = llm.bind_tools([retriever_biblioteca, web_search_tool])
+            response = tool_router_llm.invoke(f"Perfil do Cliente: {state['perfil_cliente']}\n\nPergunta: {last_message.content}")
             
-        tool_name = response.tool_calls[0]["name"]
-        return "usar_busca_web" if tool_name == "TavilySearchResults" else "usar_biblioteca_fiscal"
+            if not response.tool_calls:
+                return "gerar_resposta_sem_contexto"
+            tool_name = response.tool_calls[0]["name"]
+            return "usar_busca_web" if tool_name == "TavilySearchResults" else "usar_biblioteca_fiscal"
 
-    def no_busca_biblioteca(state: AgentState):
-        pergunta = state["messages"][-1].content
-        perfil = state["perfil_cliente"]
-        query = f"Perfil: {perfil}\nPergunta: {pergunta}"
-        
-        docs = retriever_biblioteca.invoke(query)
-        contexto_text = "\n---\n".join([doc.page_content for doc in docs])
-        
-        # Prepara os metadados para o MCP
-        metadados = [{"source": doc.metadata.get('document_type', 'Lei'), "page": doc.metadata.get('page'), "type": doc.metadata.get('document_type')} for doc in docs]
-        
-        msg = AIMessage(content=f"Contexto Biblioteca: {contexto_text}")
-        return {"messages": [msg], "sources_data": metadados}
+        def no_busca_biblioteca(state: AgentState):
+            pergunta = state["messages"][-1].content
+            perfil = state["perfil_cliente"]
+            query = f"Perfil: {perfil}\nPergunta: {pergunta}"
+            docs = retriever_biblioteca.invoke(query)
+            contexto_text = "\n---\n".join([doc.page_content for doc in docs])
+            metadados = [{"source": doc.metadata.get('document_type', 'Lei'), "page": doc.metadata.get('page'), "type": doc.metadata.get('document_type')} for doc in docs]
+            msg = AIMessage(content=f"Contexto Biblioteca: {contexto_text}")
+            return {"messages": [msg], "sources_data": metadados}
 
-    def no_busca_web(state: AgentState):
-        pergunta = state["messages"][-1].content
-        docs = web_search_tool.invoke(pergunta)
-        contexto_text = "\n---\n".join([str(doc) for doc in docs])
-        
-        # Prepara os metadados para o MCP
-        metadados = [{"source": "Tavily Web Search", "page": None, "type": "WEB", "content": doc['content']} for doc in docs]
-        
-        msg = AIMessage(content=f"Contexto da Web (Notícias): {contexto_text}")
-        return {"messages": [msg], "sources_data": metadados}
+        def no_busca_web(state: AgentState):
+            pergunta = state["messages"][-1].content
+            docs = web_search_tool.invoke(pergunta)
+            contexto_text = "\n---\n".join([str(doc) for doc in docs])
+            metadados = [{"source": "Tavily Web Search", "page": None, "type": "WEB", "content": doc['content']} for doc in docs]
+            msg = AIMessage(content=f"Contexto da Web (Notícias): {contexto_text}")
+            return {"messages": [msg], "sources_data": metadados}
 
-    def no_gerador_resposta(state: AgentState):
-        """
-        Nó que constrói o Model Context Protocol (MCP) e gera a resposta.
-        """
-        messages = state["messages"]
-        perfil = state["perfil_cliente"]
-        
-        # 1. Extrair Contexto Bruto
-        contexto_msg = next((msg for msg in reversed(messages) if isinstance(msg, AIMessage) and ('Contexto' in msg.content)), None)
-        contexto_juridico_bruto = contexto_msg.content if contexto_msg else "Nenhuma fonte relevante encontrada."
-        
-        # 2. Formatar Fontes Detalhadas (para o MCP)
-        fontes_detalhadas = []
-        for i, fonte in enumerate(state.get("sources_data", [])):
+        def no_gerador_resposta(state: AgentState):
+            messages = state["messages"]
+            perfil = state["perfil_cliente"]
+            contexto_msg = next((msg for msg in reversed(messages) if isinstance(msg, AIMessage) and ('Contexto' in msg.content)), None)
+            contexto_juridico_bruto = contexto_msg.content if contexto_msg else "Nenhuma fonte relevante encontrada."
+            
+            fontes_detalhadas = []
+            for i, fonte in enumerate(state.get("sources_data", [])):
+                 try:
+                    fontes_detalhadas.append(FonteDocumento(
+                        document_source=fonte.get("source", "N/A"),
+                        page_number=fonte.get("page"),
+                        chunk_index=i + 1,
+                        document_type=fonte.get("type", "DESCONHECIDO")
+                    ))
+                 except Exception:
+                     pass
+            
             try:
-                fontes_detalhadas.append(FonteDocumento(
-                    document_source=fonte.get("source", "N/A"),
-                    page_number=fonte.get("page"),
-                    chunk_index=i + 1,
-                    document_type=fonte.get("type", "DESCONHECIDO")
-                ))
-            except Exception:
-                pass 
+                context_protocol = ConsultaContext(
+                    trace_id=st.session_state.thread_id, perfil_cliente=perfil, pergunta_cliente=messages[-1].content,
+                    contexto_juridico_bruto=contexto_juridico_bruto, fontes_detalhadas=fontes_detalhadas,
+                    prompt_mestre="O Agente Fiscal Advisor, especialista em reforma tributária."
+                )
+            except Exception as e:
+                raise ValueError(f"Falha na validação do MCP (ContextProtocolModel): {e}")
 
-        # 3. CONSTRUIR E VALIDAR O PROTOCOLO (MCP)
-        try:
-            context_protocol = ConsultaContext(
-                trace_id=st.session_state.thread_id,
-                perfil_cliente=perfil,
-                pergunta_cliente=messages[-1].content,
-                contexto_juridico_bruto=contexto_juridico_bruto,
-                fontes_detalhadas=fontes_detalhadas,
-                prompt_mestre="O Agente Fiscal Advisor, especialista em reforma tributária."
+            prompt_mestre_msg = HumanMessage(
+                content=f"""
+                {context_protocol.prompt_mestre}
+                Com base no contexto a seguir, responda à última pergunta do usuário.
+                **Contexto Jurídico Validado:** {context_protocol.contexto_juridico_bruto}
+                """
             )
-        except Exception as e:
-            raise ValueError(f"Falha na validação do MCP (ContextProtocolModel): {e}")
+            response = llm.invoke(messages + [prompt_mestre_msg])
+            return {"messages": [AIMessage(content=response.content)], "mcp_data": context_protocol.model_dump_json()}
 
-        # 4. Gerar Resposta (Usando o Protocolo Validado)
-        prompt_mestre_msg = HumanMessage(
-            content=f"""
-            {context_protocol.prompt_mestre}
-            Com base no contexto a seguir, responda à última pergunta do usuário.
-            **Contexto Jurídico Validado:** {context_protocol.contexto_juridico_bruto}
-            """
+        # --- COMPILAÇÃO DO GRAFO (O MAESTRO) ---
+        workflow = StateGraph(AgentState)
+        workflow.add_node("usar_biblioteca_fiscal", no_busca_biblioteca)
+        workflow.add_node("usar_busca_web", no_busca_web)
+        workflow.add_node("gerar_resposta", no_gerador_resposta)
+        workflow.add_node("gerar_resposta_sem_contexto", no_gerador_resposta) 
+        workflow.add_conditional_edges(
+            START, roteador_de_ferramentas,
+            {"usar_biblioteca_fiscal": "usar_biblioteca_fiscal", "usar_busca_web": "usar_busca_web", "gerar_resposta_sem_contexto": "gerar_resposta_sem_contexto"}
         )
-        response = llm.invoke(messages + [prompt_mestre_msg])
-        
-        return {"messages": [AIMessage(content=response.content)], "mcp_data": context_protocol.model_dump_json()}
+        workflow.add_edge("usar_biblioteca_fiscal", "gerar_resposta")
+        workflow.add_edge("usar_busca_web", "gerar_resposta")
+        workflow.add_edge("gerar_resposta", END)
+        workflow.add_edge("gerar_resposta_sem_contexto", END)
+        memory = MemorySaver()
+        app_graph = workflow.compile(checkpointer=memory)
 
-    # --- COMPILAÇÃO DO GRAFO (O MAESTRO) ---
-    workflow = StateGraph(AgentState)
-    workflow.add_node("usar_biblioteca_fiscal", no_busca_biblioteca)
-    workflow.add_node("usar_busca_web", no_busca_web)
-    workflow.add_node("gerar_resposta", no_gerador_resposta)
-    workflow.add_node("gerar_resposta_sem_contexto", no_gerador_resposta) 
-    workflow.add_conditional_edges(
-        START, roteador_de_ferramentas,
-        {"usar_biblioteca_fiscal": "usar_biblioteca_fiscal", "usar_busca_web": "usar_busca_web", "gerar_resposta_sem_contexto": "gerar_resposta_sem_contexto"}
-    )
-    workflow.add_edge("usar_biblioteca_fiscal", "gerar_resposta")
-    workflow.add_edge("usar_busca_web", "gerar_resposta")
-    workflow.add_edge("gerar_resposta", END)
-    workflow.add_edge("gerar_resposta_sem_contexto", END)
-    
-    memory = MemorySaver()
-    app_graph = workflow.compile(checkpointer=memory)
+        try:
+            count = qdrant_client.count(collection_name=NOME_DA_COLECAO, exact=True)
+            st.session_state.db_count = count.count
+        except Exception:
+            st.session_state.db_count = 0
 
-    try:
-        count = qdrant_client.count(collection_name=NOME_DA_COLECAO, exact=True)
-        st.session_state.db_count = count.count
-    except Exception:
-        st.session_state.db_count = 0
+        return app_graph, langfuse 
 
-    return app_graph, langfuse 
+    except Exception as e:
+        print(f"Erro fatal: {e}")
+        st.error(f"Erro de Conexão: Verifique todas as suas 8 Secrets. Detalhe: {e}")
+        return None, None
 
 # --- 4. CARREGAR OS SERVIÇOS NA INICIALIZAÇÃO ---
 agente, langfuse = carregar_servicos_e_grafo()
