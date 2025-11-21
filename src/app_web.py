@@ -12,34 +12,12 @@ from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langfuse import Langfuse
 from protocol import ConsultaContext, FonteDocumento # Importa o MCP
 
-
-# --- BLOCO DE CÓDIGO TEMPORÁRIO PARA DIAGNÓSTICO DE SECRETS ---
-# Este bloco verifica as 6 secrets cruciais antes de inicializar qualquer coisa.
-try:
-    required_secrets = ["OPENAI_API_KEY", "QDRANT_URL", "QDRANT_API_KEY", "TAVILY_API_KEY", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"]
-    missing_secrets = [s for s in required_secrets if s not in st.secrets]
-    
-    if missing_secrets:
-        st.set_page_config(layout="wide")
-        st.error("ERRO CRÍTICO: As seguintes Secrets não foram encontradas no painel de configurações do Streamlit Cloud (Settings > Secrets):")
-        st.markdown(f"**{', '.join(missing_secrets)}**")
-        st.warning("O aplicativo irá falhar até que essas chaves sejam adicionadas ou corrigidas.")
-        st.stop() # Para a execução do script
-        # --- 1. CONFIGURAÇÃO DA PÁGINA E INICIALIZAÇÃO DE ESTADO ---
-        st.set_page_config(
-            page_title="Agente Fiscal v4.2 (LangGraph + MCP)",
-            page_icon="🤖",
-            layout="wide"
-        )
-        
-except Exception as e:
-    # Captura erros de parsing ou outros erros de inicialização
-    st.set_page_config(layout="wide")
-    st.error(f"Erro no Diagnóstico de Secrets. O problema pode ser uma URL mal formatada. Detalhe: {e}")
-    st.stop()
-# --------------------------------------------------------------
-
-
+# --- 1. CONFIGURAÇÃO DA PÁGINA E INICIALIZAÇÃO DE ESTADO ---
+st.set_page_config(
+    page_title="Agente Fiscal v4.2 (LangGraph + MCP)",
+    page_icon="🤖",
+    layout="wide"
+)
 
 # Inicialização de variáveis de sessão
 if "messages" not in st.session_state:
@@ -56,8 +34,8 @@ if "thread_id" not in st.session_state:
 
 # --- Constantes de Serviço ---
 NOME_DA_COLECAO = "leis_fiscais_v1"
-MODELO_LLM = "gpt-4o"
-MODELO_EMBEDDING = "text-embedding-ada-002"
+MODELO_LLM = st.secrets["MODELO_LLM"]
+MODELO_EMBEDDING = st.secrets["MODELO_EMBEDDING"]
 
 
 # --- 2. DEFINIÇÃO DE ESTADO DO LANGGRAPH ---
@@ -207,7 +185,7 @@ def carregar_servicos_e_grafo():
         except Exception:
             st.session_state.db_count = 0
 
-        return app_graph
+        return app_graph, langfuse 
 
     except KeyError as e:
         # Pega a falha de Secret e retorna None
@@ -219,7 +197,7 @@ def carregar_servicos_e_grafo():
         return None, None
 
 # --- 4. CARREGAR OS SERVIÇOS NA INICIALIZAÇÃO ---
-agente= carregar_servicos_e_grafo()
+agente, langfuse = carregar_servicos_e_grafo()
 
 # --- 5. INTERFACE DA BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
@@ -261,39 +239,39 @@ if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    if agente and Langfuse:
+    if agente and langfuse:
         with st.chat_message("assistant"):
             with st.spinner("O Agente está pensando... (Rastreando com Langfuse)..."):
                 
                 # Prepara os Callbacks do Langfuse para esta execução
                 langfuse_callbacks = [] 
-                if agente:
-                    with st.chat_message("assistant"):
-                        with st.spinner("O Agente está pensando..."):
-                            
-                            # Configuração sem callbacks Langfuse (lista vazia)
-                            config = {
-                                "configurable": {"thread_id": st.session_state.thread_id},
-                                "callbacks": [] 
-                            }
-                            inputs = {
-                                "messages": [HumanMessage(content=prompt)],
-                                "perfil_cliente": st.session_state.client_profile
-                            }
-                            
-                            try:
-                                # ... (O restante da lógica de stream é mantida) ...
-                                resposta_final = ""
-                                for event in agente.stream(inputs, config, stream_mode="values"):
-                                    new_message = event["messages"][-1]
-                                    if new_message.role == "assistant":
-                                        resposta_final = new_message.content
+                if langfuse:
+                    langfuse_callbacks = [langfuse.get_langchain_callback(
+                        user_id="usuario_streamlit",
+                        session_id=st.session_state.thread_id
+                    )]
+                
+                config = {
+                    "configurable": {"thread_id": st.session_state.thread_id},
+                    "callbacks": langfuse_callbacks
+                }
+                inputs = {
+                    "messages": [HumanMessage(content=prompt)],
+                    "perfil_cliente": st.session_state.client_profile
+                }
+                
+                try:
+                    resposta_final = ""
+                    for event in agente.stream(inputs, config, stream_mode="values"):
+                        new_message = event["messages"][-1]
+                        if new_message.role == "assistant":
+                            resposta_final = new_message.content
 
-                                st.markdown(resposta_final)
-                                st.session_state.messages.append({"role": "assistant", "content": resposta_final})
-                            
-                            except Exception as e:
-                                st.error(f"Erro ao executar o agente: {e}")
-                                print(f"Erro na execução do grafo: {e}")
-                else:
-                    st.error("O Agente não pôde ser carregado. Verifique as 'Secrets' e recarregue a página.")
+                    st.markdown(resposta_final)
+                    st.session_state.messages.append({"role": "assistant", "content": resposta_final})
+                
+                except Exception as e:
+                    st.error(f"Erro ao executar o agente: {e}")
+                    print(f"Erro na execução do grafo: {e}")
+    else:
+        st.error("O Agente não pôde ser carregado. Verifique as 'Secrets' e recarregue a página.")
