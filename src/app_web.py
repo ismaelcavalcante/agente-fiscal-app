@@ -9,7 +9,7 @@ from langchain_community.tools.tavily_search import TavilySearchResults
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
-from langfuse import Langfuse, langfuse_callbacks
+from langfuse import Langfuse
 from protocol import ConsultaContext, FonteDocumento # Importa o MCP
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA E INICIALIZAÇÃO DE ESTADO ---
@@ -185,7 +185,7 @@ def carregar_servicos_e_grafo():
         except Exception:
             st.session_state.db_count = 0
 
-        return app_graph, langfuse 
+        return app_graph
 
     except KeyError as e:
         # Pega a falha de Secret e retorna None
@@ -197,7 +197,7 @@ def carregar_servicos_e_grafo():
         return None, None
 
 # --- 4. CARREGAR OS SERVIÇOS NA INICIALIZAÇÃO ---
-agente, langfuse = carregar_servicos_e_grafo()
+agente = carregar_servicos_e_grafo()
 
 # --- 5. INTERFACE DA BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
@@ -234,44 +234,56 @@ for message in st.session_state.messages:
 
 # Recebe a nova pergunta do usuário
 if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
-    
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+        
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-    if agente and langfuse:
-        with st.chat_message("assistant"):
-            with st.spinner("O Agente está pensando... (Rastreando com Langfuse)..."):
-                
-                # Prepara os Callbacks do Langfuse para esta execução
-                langfuse_callbacks = [] 
-                if langfuse:
-                    langfuse_callbacks = [langfuse.get_langchain_callback(
-                        user_id="usuario_streamlit",
-                        session_id=st.session_state.thread_id
-                    )]
-                
-                config = {
-                    "configurable": {"thread_id": st.session_state.thread_id},
-                    "callbacks": langfuse_callbacks
-                }
-                inputs = {
-                    "messages": [HumanMessage(content=prompt)],
-                    "perfil_cliente": st.session_state.client_profile
-                }
-                
-                try:
-                    resposta_final = ""
-                    for event in agente.stream(inputs, config, stream_mode="values"):
-                        new_message = event["messages"][-1]
-                        if new_message.role == "assistant":
-                            resposta_final = new_message.content
+        # Novo bloco de execução (agora mais limpo e focado no agente)
+        if agente:
+            with st.chat_message("assistant"):
+                with st.spinner("O Agente está pensando..."):
+                    
+                    # --- CONFIGURAÇÃO DE CALLBACKS (NOVO BLOCO) ---
+                    # 1. Tenta inicializar o Langfuse para o callback (Este é o ponto de falha)
+                    langfuse_callbacks = []
+                    try:
+                        lf = Langfuse(
+                            public_key=st.secrets["LANGFUSE_PUBLIC_KEY"],
+                            secret_key=st.secrets["LANGFUSE_SECRET_KEY"],
+                            host=st.secrets.get("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
+                        )
+                        # AQUI ESTÁ O FIX: AQUI ELE VAI CRIAR O CALLBACK HANDLER
+                        langfuse_callbacks = [lf.get_langchain_callback(
+                            user_id="usuario_streamlit",
+                            session_id=st.session_state.thread_id
+                        )]
+                    except Exception as e:
+                        # Se o Langfuse falhar, apenas reportamos o erro no log e seguimos sem monitoramento.
+                        print(f"AVISO: Falha ao inicializar Langfuse para o callback. Monitoramento DESATIVADO. Detalhe: {e}")
+                    # -----------------------------------------------------------------
 
-                    st.markdown(resposta_final)
-                    st.session_state.messages.append({"role": "assistant", "content": resposta_final})
-                
-                except Exception as e:
-                    st.error(f"Erro ao executar o agente: {e}")
-                    print(f"Erro na execução do grafo: {e}")
-    else:
-        st.error("O Agente não pôde ser carregado. Verifique as 'Secrets' e recarregue a página.")
+                    config = {
+                        "configurable": {"thread_id": st.session_state.thread_id},
+                        "callbacks": langfuse_callbacks # Será [] se Langfuse falhar
+                    }
+                    inputs = {
+                        "messages": [HumanMessage(content=prompt)],
+                        "perfil_cliente": st.session_state.client_profile
+                    }
+                    
+                    try:
+                        resposta_final = ""
+                        for event in agente.stream(inputs, config, stream_mode="values"):
+                            new_message = event["messages"][-1]
+                            if new_message.role == "assistant":
+                                resposta_final = new_message.content
+
+                        st.markdown(resposta_final)
+                        st.session_state.messages.append({"role": "assistant", "content": resposta_final})
+                    
+                    except Exception as e:
+                        st.error(f"Erro ao executar o agente: {e}")
+                        print(f"Erro na execução do grafo: {e}")
+        else:
+            st.error("O Agente não pôde ser carregado. Verifique as 'Secrets' e recarregue a página.")
