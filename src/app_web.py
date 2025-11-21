@@ -228,10 +228,12 @@ if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
             with st.spinner("O Agente está pensando... (Rastreando com Langfuse)..."):
                 
                 # Prepara os Callbacks do Langfuse para esta execução
-                langfuse_callbacks = [langfuse.get_langchain_callback(
-                    user_id="usuario_streamlit",
-                    session_id=st.session_state.thread_id
-                )]
+                langfuse_callbacks = []
+                if langfuse: # <-- VERIFICA SE O OBJETO EXISTE ANTES DE CHAMAR O MÉTODO
+                    langfuse_callbacks = [langfuse.get_langchain_callback(
+                        user_id="usuario_streamlit",
+                        session_id=st.session_state.thread_id
+                        )]
                 
                 config = {
                     "configurable": {"thread_id": st.session_state.thread_id},
