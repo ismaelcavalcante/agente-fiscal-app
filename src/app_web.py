@@ -12,12 +12,34 @@ from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langfuse import Langfuse
 from protocol import ConsultaContext, FonteDocumento # Importa o MCP
 
-# --- 1. CONFIGURAÇÃO DA PÁGINA E INICIALIZAÇÃO DE ESTADO ---
-st.set_page_config(
-    page_title="Agente Fiscal v4.2 (LangGraph + MCP)",
-    page_icon="🤖",
-    layout="wide"
-)
+
+# --- BLOCO DE CÓDIGO TEMPORÁRIO PARA DIAGNÓSTICO DE SECRETS ---
+# Este bloco verifica as 6 secrets cruciais antes de inicializar qualquer coisa.
+try:
+    required_secrets = ["OPENAI_API_KEY", "QDRANT_URL", "QDRANT_API_KEY", "TAVILY_API_KEY", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"]
+    missing_secrets = [s for s in required_secrets if s not in st.secrets]
+    
+    if missing_secrets:
+        st.set_page_config(layout="wide")
+        st.error("ERRO CRÍTICO: As seguintes Secrets não foram encontradas no painel de configurações do Streamlit Cloud (Settings > Secrets):")
+        st.markdown(f"**{', '.join(missing_secrets)}**")
+        st.warning("O aplicativo irá falhar até que essas chaves sejam adicionadas ou corrigidas.")
+        st.stop() # Para a execução do script
+        # --- 1. CONFIGURAÇÃO DA PÁGINA E INICIALIZAÇÃO DE ESTADO ---
+        st.set_page_config(
+            page_title="Agente Fiscal v4.2 (LangGraph + MCP)",
+            page_icon="🤖",
+            layout="wide"
+        )
+        
+except Exception as e:
+    # Captura erros de parsing ou outros erros de inicialização
+    st.set_page_config(layout="wide")
+    st.error(f"Erro no Diagnóstico de Secrets. O problema pode ser uma URL mal formatada. Detalhe: {e}")
+    st.stop()
+# --------------------------------------------------------------
+
+
 
 # Inicialização de variáveis de sessão
 if "messages" not in st.session_state:
