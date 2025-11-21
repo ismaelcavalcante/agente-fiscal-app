@@ -261,7 +261,7 @@ if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    if agente and langfuse:
+    if agente and Langfuse:
         with st.chat_message("assistant"):
             with st.spinner("O Agente está pensando... (Rastreando com Langfuse)..."):
                 
