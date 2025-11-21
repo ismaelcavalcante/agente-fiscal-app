@@ -10,8 +10,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langfuse import Langfuse
-
-from protocol import ConsultaContext, FonteDocumento
+from .protocol import ConsultaContext, FonteDocumento # Importa o MCP
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA E INICIALIZAÇÃO DE ESTADO ---
 st.set_page_config(
@@ -35,10 +34,11 @@ if "thread_id" not in st.session_state:
 
 # --- Constantes de Serviço ---
 NOME_DA_COLECAO = "leis_fiscais_v1"
-# Os valores das Secrets são lidos DENTRO da função cache abaixo.
-# NENHUMA LEITURA DE SECRETS FORA DAS FUNÇÕES!
+MODELO_LLM = "gpt-4o"
+MODELO_EMBEDDING = "text-embedding-ada-002"
 
-# --- 2. DEFINIÇÃO DE ESTADO DO LANGGRAPH (MANTIDA) ---
+
+# --- 2. DEFINIÇÃO DE ESTADO DO LANGGRAPH ---
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], lambda x, y: x + y]
     perfil_cliente: str
@@ -49,30 +49,33 @@ class AgentState(TypedDict):
 @st.cache_resource
 def carregar_servicos_e_grafo():
     try:
-        # --- CARREGAMENTO CORRETO DAS SECRETS (DENTRO DA FUNÇÃO) ---
-        # Definimos os valores que vamos usar a partir do st.secrets
-        OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
-        MODELO_LLM = st.secrets["MODELO_LLM"]
-        MODELO_EMBEDDING = st.secrets["MODELO_EMBEDDING"]
-        QDRANT_URL = st.secrets["QDRANT_URL"]
-        QDRANT_API_KEY = st.secrets["QDRANT_API_KEY"]
-        TAVILY_API_KEY = st.secrets["TAVILY_API_KEY"]
-        LANGFUSE_PUBLIC_KEY = st.secrets["LANGFUSE_PUBLIC_KEY"]
-        LANGFUSE_SECRET_KEY = st.secrets["LANGFUSE_SECRET_KEY"]
-        LANGFUSE_BASE_URL = st.secrets["LANGFUSE_BASE_URL"]
+        # --- BLOCO DE LEITURA E VALIDAÇÃO DE SECRETS ---
         
-        # -----------------------------------------------------------
+        # Leitura centralizada de secrets
+        secrets_dict = {
+            "OPENAI_API_KEY": st.secrets["OPENAI_API_KEY"],
+            "QDRANT_URL": st.secrets["QDRANT_URL"],
+            "QDRANT_API_KEY": st.secrets["QDRANT_API_KEY"],
+            "TAVILY_API_KEY": st.secrets["TAVILY_API_KEY"],
+            "LANGFUSE_PUBLIC_KEY": st.secrets["LANGFUSE_PUBLIC_KEY"],
+            "LANGFUSE_SECRET_KEY": st.secrets["LANGFUSE_SECRET_KEY"],
+            "LANGFUSE_BASE_URL": st.secrets["LANGFUSE_BASE_URL"]
+        }
 
-        # Validar Secrets e carregar clientes
-        llm = ChatOpenAI(api_key=OPENAI_API_KEY, model=MODELO_LLM, temperature=0)
-        embeddings = OpenAIEmbeddings(api_key=OPENAI_API_KEY, model=MODELO_EMBEDDING)
-        qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
+        # 1. Carregar Clientes Principais
+        llm = ChatOpenAI(api_key=secrets_dict["OPENAI_API_KEY"], model=MODELO_LLM, temperature=0)
+        embeddings = OpenAIEmbeddings(api_key=secrets_dict["OPENAI_API_KEY"], model=MODELO_EMBEDDING)
+        qdrant_client = QdrantClient(url=secrets_dict["QDRANT_URL"], api_key=secrets_dict["QDRANT_API_KEY"])
         
-        # Langfuse
-        os.environ["TAVILY_API_KEY"] = TAVILY_API_KEY # Necessário para a ferramenta Tavily
-        langfuse = Langfuse(public_key=LANGFUSE_PUBLIC_KEY, secret_key=LANGFUSE_SECRET_KEY, host=LANGFUSE_BASE_URL)
+        # 2. Inicializar Langfuse (o cliente que pode falhar silenciosamente)
+        os.environ["TAVILY_API_KEY"] = secrets_dict["TAVILY_API_KEY"]
+        langfuse = Langfuse(
+            public_key=secrets_dict["LANGFUSE_PUBLIC_KEY"],
+            secret_key=secrets_dict["LANGFUSE_SECRET_KEY"],
+            host=secrets_dict["LANGFUSE_BASE_URL"]
+        )
 
-        # Configuração do Retriever (Qdrant) com Filtro de Metadados
+        # 3. Configuração do Retriever (Qdrant) com Filtro de Metadados
         qdrant_store = Qdrant(client=qdrant_client, collection_name=NOME_DA_COLECAO, embeddings=embeddings)
         qdrant_filter = models.Filter(should=[
             models.FieldCondition(key="metadata.regime_tax", match=models.MatchText(text="Simples Nacional")),
@@ -80,10 +83,10 @@ def carregar_servicos_e_grafo():
         ])
         retriever_biblioteca = qdrant_store.as_retriever(search_kwargs={"k": 7, "filter": qdrant_filter})
         
-        # Ferramenta de Web Search
+        # 4. Ferramenta de Web Search
         web_search_tool = TavilySearchResults(max_results=3)
 
-        # --- NÓS DO LANGGRAPH (MANTIDOS IGUAIS) ---
+        # --- DEFINIÇÃO DOS NÓS DO LANGGRAPH (Lógica de Decisão) ---
         def roteador_de_ferramentas(state: AgentState) -> str:
             messages = state["messages"]
             last_message = messages[-1]
@@ -99,9 +102,12 @@ def carregar_servicos_e_grafo():
             pergunta = state["messages"][-1].content
             perfil = state["perfil_cliente"]
             query = f"Perfil: {perfil}\nPergunta: {pergunta}"
+            
             docs = retriever_biblioteca.invoke(query)
             contexto_text = "\n---\n".join([doc.page_content for doc in docs])
+            
             metadados = [{"source": doc.metadata.get('document_type', 'Lei'), "page": doc.metadata.get('page'), "type": doc.metadata.get('document_type')} for doc in docs]
+            
             msg = AIMessage(content=f"Contexto Biblioteca: {contexto_text}")
             return {"messages": [msg], "sources_data": metadados}
 
@@ -116,21 +122,23 @@ def carregar_servicos_e_grafo():
         def no_gerador_resposta(state: AgentState):
             messages = state["messages"]
             perfil = state["perfil_cliente"]
+            
             contexto_msg = next((msg for msg in reversed(messages) if isinstance(msg, AIMessage) and ('Contexto' in msg.content)), None)
             contexto_juridico_bruto = contexto_msg.content if contexto_msg else "Nenhuma fonte relevante encontrada."
             
             fontes_detalhadas = []
             for i, fonte in enumerate(state.get("sources_data", [])):
-                 try:
+                try:
                     fontes_detalhadas.append(FonteDocumento(
                         document_source=fonte.get("source", "N/A"),
                         page_number=fonte.get("page"),
                         chunk_index=i + 1,
                         document_type=fonte.get("type", "DESCONHECIDO")
                     ))
-                 except Exception:
-                     pass
-            
+                except Exception:
+                    pass 
+
+            # CONSTRUIR E VALIDAR O PROTOCOLO (MCP)
             try:
                 context_protocol = ConsultaContext(
                     trace_id=st.session_state.thread_id, perfil_cliente=perfil, pergunta_cliente=messages[-1].content,
@@ -140,6 +148,7 @@ def carregar_servicos_e_grafo():
             except Exception as e:
                 raise ValueError(f"Falha na validação do MCP (ContextProtocolModel): {e}")
 
+            # Gerar Resposta (Usando o Protocolo Validado)
             prompt_mestre_msg = HumanMessage(
                 content=f"""
                 {context_protocol.prompt_mestre}
@@ -148,6 +157,7 @@ def carregar_servicos_e_grafo():
                 """
             )
             response = llm.invoke(messages + [prompt_mestre_msg])
+            
             return {"messages": [AIMessage(content=response.content)], "mcp_data": context_protocol.model_dump_json()}
 
         # --- COMPILAÇÃO DO GRAFO (O MAESTRO) ---
@@ -164,9 +174,11 @@ def carregar_servicos_e_grafo():
         workflow.add_edge("usar_busca_web", "gerar_resposta")
         workflow.add_edge("gerar_resposta", END)
         workflow.add_edge("gerar_resposta_sem_contexto", END)
+        
         memory = MemorySaver()
         app_graph = workflow.compile(checkpointer=memory)
 
+        # Verifica a contagem de fatias no DB
         try:
             count = qdrant_client.count(collection_name=NOME_DA_COLECAO, exact=True)
             st.session_state.db_count = count.count
@@ -175,9 +187,13 @@ def carregar_servicos_e_grafo():
 
         return app_graph, langfuse 
 
+    except KeyError as e:
+        # Pega a falha de Secret e retorna None
+        st.error(f"ERRO FATAL: Secret {e} não encontrada. Verifique as 6 chaves no painel do Streamlit.")
+        return None, None
     except Exception as e:
-        print(f"Erro fatal: {e}")
-        st.error(f"Erro de Conexão: Verifique todas as suas 8 Secrets. Detalhe: {e}")
+        # Pega qualquer outra falha (conexão, etc.)
+        st.error(f"ERRO DE CONEXÃO: O agente não pôde ser carregado. Detalhe: {e}")
         return None, None
 
 # --- 4. CARREGAR OS SERVIÇOS NA INICIALIZAÇÃO ---
@@ -185,7 +201,7 @@ agente, langfuse = carregar_servicos_e_grafo()
 
 # --- 5. INTERFACE DA BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
-    st.image("https://raw.githubusercontent.com/ismaelcavalcante/agente-fiscal-app/refs/heads/main/assets/logo.png", width=80)
+    st.image("https://cdn-icons-png.flaticon.com/128/10573/10573788.png", width=80)
     st.title("Perfil do Cliente")
     st.markdown("O Agente usará este perfil para todas as consultas.")
     
@@ -228,12 +244,12 @@ if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
             with st.spinner("O Agente está pensando... (Rastreando com Langfuse)..."):
                 
                 # Prepara os Callbacks do Langfuse para esta execução
-                langfuse_callbacks = []
-                if langfuse: # <-- VERIFICA SE O OBJETO EXISTE ANTES DE CHAMAR O MÉTODO
+                langfuse_callbacks = [] 
+                if langfuse:
                     langfuse_callbacks = [langfuse.get_langchain_callback(
                         user_id="usuario_streamlit",
                         session_id=st.session_state.thread_id
-                        )]
+                    )]
                 
                 config = {
                     "configurable": {"thread_id": st.session_state.thread_id},
