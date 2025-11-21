@@ -207,7 +207,7 @@ def carregar_servicos_e_grafo():
         except Exception:
             st.session_state.db_count = 0
 
-        return app_graph, langfuse 
+        return app_graph
 
     except KeyError as e:
         # Pega a falha de Secret e retorna None
@@ -219,7 +219,7 @@ def carregar_servicos_e_grafo():
         return None, None
 
 # --- 4. CARREGAR OS SERVIÇOS NA INICIALIZAÇÃO ---
-agente, langfuse = carregar_servicos_e_grafo()
+agente= carregar_servicos_e_grafo()
 
 # --- 5. INTERFACE DA BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
@@ -267,33 +267,33 @@ if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
                 
                 # Prepara os Callbacks do Langfuse para esta execução
                 langfuse_callbacks = [] 
-                if langfuse:
-                    langfuse_callbacks = [langfuse.get_langchain_callback(
-                        user_id="usuario_streamlit",
-                        session_id=st.session_state.thread_id
-                    )]
-                
-                config = {
-                    "configurable": {"thread_id": st.session_state.thread_id},
-                    "callbacks": langfuse_callbacks
-                }
-                inputs = {
-                    "messages": [HumanMessage(content=prompt)],
-                    "perfil_cliente": st.session_state.client_profile
-                }
-                
-                try:
-                    resposta_final = ""
-                    for event in agente.stream(inputs, config, stream_mode="values"):
-                        new_message = event["messages"][-1]
-                        if new_message.role == "assistant":
-                            resposta_final = new_message.content
+                if agente:
+                    with st.chat_message("assistant"):
+                        with st.spinner("O Agente está pensando..."):
+                            
+                            # Configuração sem callbacks Langfuse (lista vazia)
+                            config = {
+                                "configurable": {"thread_id": st.session_state.thread_id},
+                                "callbacks": [] 
+                            }
+                            inputs = {
+                                "messages": [HumanMessage(content=prompt)],
+                                "perfil_cliente": st.session_state.client_profile
+                            }
+                            
+                            try:
+                                # ... (O restante da lógica de stream é mantida) ...
+                                resposta_final = ""
+                                for event in agente.stream(inputs, config, stream_mode="values"):
+                                    new_message = event["messages"][-1]
+                                    if new_message.role == "assistant":
+                                        resposta_final = new_message.content
 
-                    st.markdown(resposta_final)
-                    st.session_state.messages.append({"role": "assistant", "content": resposta_final})
-                
-                except Exception as e:
-                    st.error(f"Erro ao executar o agente: {e}")
-                    print(f"Erro na execução do grafo: {e}")
-    else:
-        st.error("O Agente não pôde ser carregado. Verifique as 'Secrets' e recarregue a página.")
+                                st.markdown(resposta_final)
+                                st.session_state.messages.append({"role": "assistant", "content": resposta_final})
+                            
+                            except Exception as e:
+                                st.error(f"Erro ao executar o agente: {e}")
+                                print(f"Erro na execução do grafo: {e}")
+                else:
+                    st.error("O Agente não pôde ser carregado. Verifique as 'Secrets' e recarregue a página.")
