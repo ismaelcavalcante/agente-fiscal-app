@@ -158,8 +158,8 @@ def carregar_servicos_e_grafo():
             
             metadados = [{"source": doc.metadata.get('document_type', 'Lei'), "page": doc.metadata.get('page'), "type": doc.metadata.get('document_type')} for doc in docs]
             
-            # CORREÇÃO 6: Retornar 'messages' (aqui vazia, LangGraph cuidará da concatenação)
-            return {"messages": [], "sources_data": metadados, "contexto_juridico_bruto": contexto_text}
+            # CORREÇÃO FINAL 6: Retornar o histórico de mensagens EXISTENTE (state["messages"])
+            return {"messages": state["messages"], "sources_data": metadados, "contexto_juridico_bruto": contexto_text}
 
         def no_busca_web(state: AgentState):
             pergunta = state["messages"][-1].content
@@ -176,14 +176,14 @@ def carregar_servicos_e_grafo():
             contexto_text = "\n---\n".join([str(doc) for doc in docs])
             metadados = [{"source": "Tavily Web Search", "page": None, "type": "WEB", "content": doc.get('content')} for doc in docs]
             
-            # CORREÇÃO 7: Retornar 'messages' (aqui vazia, LangGraph cuidará da concatenação)
-            return {"messages": [], "sources_data": metadados, "contexto_juridico_bruto": contexto_text}
+            # CORREÇÃO FINAL 7: Retornar o histórico de mensagens EXISTENTE (state["messages"])
+            return {"messages": state["messages"], "sources_data": metadados, "contexto_juridico_bruto": contexto_text}
 
         def no_gerador_resposta(state: AgentState):
             messages = state["messages"]
             perfil = state["perfil_cliente"]
             
-            # CORREÇÃO 4: Lê o contexto bruto diretamente do estado, ignorando a mensagem intermediária
+            # CORREÇÃO 4: Lê o contexto bruto diretamente do estado
             contexto_juridico_bruto = state.get("contexto_juridico_bruto", "Nenhuma fonte relevante encontrada.")
             
             # Pega a última HumanMessage original do usuário
@@ -246,7 +246,9 @@ def carregar_servicos_e_grafo():
             
             response = llm.invoke([ultima_mensagem_usuario, prompt_mestre_msg])
             
-            # CORREÇÃO 8: O nó de geração deve retornar a mensagem final.
+            # O nó de geração deve retornar a nova mensagem final, que será concatenada ao histórico.
+            # O restante do estado (sources_data, contexto_juridico_bruto) não precisa ser retornado
+            # se não for alterado, mas retornamos apenas a mensagem final.
             return {"messages": [AIMessage(content=response.content)], "mcp_data": context_protocol.model_dump_json()}
 
         # --- COMPILAÇÃO DO GRAFO (O MAESTRO) ---
