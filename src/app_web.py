@@ -1,6 +1,7 @@
 import streamlit as st
 from langchain_openai import ChatOpenAI
 from langfuse import Langfuse
+import pprint
 
 from components.perfil_select import selecionar_perfil
 from components.perfil_form import editar_perfil_form
@@ -153,6 +154,16 @@ if user_input:
     }
 
     try:
+
+        logger.error("===== DEBUG STATE_INPUT =====")
+        pprint.pprint({
+            "messages": st.session_state.messages,
+            "perfil_cliente": perfil_cliente,
+        })
+        logger.error("===== END DEBUG =====")
+
+
+
         result = app_graph.invoke(
             state_input,
             config={"configurable": {"thread_id": st.session_state.thread_id}},
