@@ -1,21 +1,45 @@
+# graph/nodes.py
+
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from utils.logs import logger
 from rag.qdrant import retrieve_documents
 from rag.web import execute_web_search
 from rag.rules import get_fixed_rule_response
-from utils.logs import logger
 from protocol import ConsultaContext, FonteDocumento
 
 
-def node_rag_qdrant(state: dict, retriever) -> dict:
-    """
-    Executa RAG usando Qdrant.
-    """
-    question = state["messages"][-1].content
-    client_profile = state["perfil_cliente"]
+# -------------------------------
+# 🔰 Proteção universal do state
+# -------------------------------
 
+def ensure_state(state: dict) -> dict:
+    """Garante que o state tenha sempre os campos mínimos."""
+    if state is None:
+        return {"messages": []}
+
+    if "messages" not in state:
+        state["messages"] = []
+
+    if "perfil_cliente" not in state:
+        state["perfil_cliente"] = "Perfil não informado."
+
+    return state
+
+
+# -------------------------------
+# 🔎 RAG QDRANT
+# -------------------------------
+
+def node_rag_qdrant(state: dict, retriever):
+    state = ensure_state(state)
+
+    if not state["messages"]:
+        return {"messages": [AIMessage(content="Nenhuma pergunta recebida.")]}
+
+    question = state["messages"][-1].content
     logger.info("Executando RAG (Qdrant)...")
 
-    docs, contexto = retrieve_documents(retriever, question, client_profile)
+    docs, contexto = retrieve_documents(retriever, question, state["perfil_cliente"])
 
     return {
         "sources_data": docs,
@@ -23,12 +47,17 @@ def node_rag_qdrant(state: dict, retriever) -> dict:
     }
 
 
-def node_rag_web(state: dict, web_tool) -> dict:
-    """
-    Executa busca na Web via Tavily.
-    """
-    question = state["messages"][-1].content
+# -------------------------------
+# 🌐 RAG WEB
+# -------------------------------
 
+def node_rag_web(state: dict, web_tool):
+    state = ensure_state(state)
+
+    if not state["messages"]:
+        return {"messages": [AIMessage(content="Nenhuma pergunta recebida.")]}
+
+    question = state["messages"][-1].content
     logger.info("Executando Web Search...")
 
     docs, contexto = execute_web_search(web_tool, question)
@@ -39,12 +68,14 @@ def node_rag_web(state: dict, web_tool) -> dict:
     }
 
 
-def node_rag_rules(state: dict) -> dict:
-    """
-    Retorna regras tributárias fixas.
-    """
-    question = state["messages"][-1].content
+# -------------------------------
+# 📘 Regras fixas
+# -------------------------------
 
+def node_rag_rules(state: dict):
+    state = ensure_state(state)
+
+    question = state["messages"][-1].content if state["messages"] else ""
     logger.info("Aplicando regras tributárias fixas...")
 
     contexto = get_fixed_rule_response(question)
@@ -55,12 +86,21 @@ def node_rag_rules(state: dict) -> dict:
     }
 
 
-def node_direct_answer(state: dict, llm) -> dict:
-    """
-    Resposta direta do LLM *sem* contexto externo.
-    """
-    question = state["messages"][-1].content
+# -------------------------------
+# ✏️ Resposta direta (sem RAG)
+# -------------------------------
 
+def node_direct_answer(state: dict, llm):
+    state = ensure_state(state)
+
+    if not state["messages"]:
+        return {
+            "messages": [
+                AIMessage(content="Preciso que você envie uma pergunta.")
+            ]
+        }
+
+    question = state["messages"][-1].content
     logger.info("Gerando resposta direta (sem RAG)...")
 
     response = llm.invoke([HumanMessage(content=question)])
@@ -70,61 +110,64 @@ def node_direct_answer(state: dict, llm) -> dict:
     }
 
 
-def node_generate_final(state: dict, llm) -> dict:
-    """
-    Nó final: combina contexto + pergunta + LLM + gera MCP.
-    """
+# -------------------------------
+# 🧠 Nó Final + MCP
+# -------------------------------
+
+def node_generate_final(state: dict, llm):
+    state = ensure_state(state)
+
+    if not state["messages"]:
+        return {"messages": [AIMessage(content="Nenhuma pergunta recebida.")]}
+
     question = state["messages"][-1].content
     perfil = state["perfil_cliente"]
     contexto = state.get("contexto_juridico_bruto", "")
-    sources = state.get("sources_data", []) or []
+    fontes = state.get("sources_data", [])
 
-    # Monta system prompt
-    prompt_sistema = f"""
-Você é um consultor tributário sênior especializado em legislação brasileira.
+    logger.info("Gerando resposta FINAL com MCP...")
+
+    prompt = f"""
+Você é um consultor tributário sênior.
 
 PERFIL DO CLIENTE:
 {perfil}
 
-CONTEXTO ENCONTRADO (use somente se relevante):
+CONTEXTO RECUPERADO:
 {contexto}
 
 INSTRUÇÕES:
-1. Use o contexto acima como fonte primária quando fizer sentido.
-2. Se o contexto citar artigos ou leis, mencione‑os explicitamente.
-3. Se o contexto estiver vazio, responda com base no seu conhecimento geral.
-4. Seja objetivo, profissional e juridicamente preciso.
+1. Use o contexto quando relevante.
+2. Cite dispositivos legais quando aplicável.
+3. Seja preciso, objetivo e técnico.
 """
 
-    # ---------- LLM ----------
     response = llm.invoke([
-        SystemMessage(content=prompt_sistema),
+        SystemMessage(content=prompt),
         HumanMessage(content=question)
     ])
 
-    # ---------- MCP ----------
+    # Construção das fontes MCP
     fontes_mcp = []
-    for i, fonte in enumerate(sources):
+    for idx, f in enumerate(fontes):
         fontes_mcp.append(
             FonteDocumento(
-                document_source=str(fonte.get("source", "desconhecido")),
-                page_number=fonte.get("page", None),
-                chunk_index=i,
-                document_type=str(fonte.get("document_type", "WEB" if fonte.get("source")=="WEB" else "LEI"))
+                document_source=str(f.get("source", "DESCONHECIDO")),
+                page_number=f.get("page"),
+                chunk_index=f.get("chunk_index", idx),
+                document_type=f.get("document_type", "LEI")
             )
         )
 
+    # Construção do MCP
     mcp = ConsultaContext(
         trace_id=state.get("thread_id"),
         perfil_cliente=perfil,
         pergunta_cliente=question,
         contexto_juridico_bruto=contexto,
         fontes_detalhadas=fontes_mcp,
-        prompt_mestre=prompt_sistema
+        prompt_mestre=prompt
     )
-
-    # Salva MCP no estado
-    state["mcp"] = mcp
 
     return {
         "messages": [AIMessage(content=response.content)],
