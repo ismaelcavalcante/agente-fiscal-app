@@ -18,12 +18,16 @@ class RetrieverWrapper:
 
         vector = self.embeddings.embed_query(enriched)
 
-        results = self.client.search(
-            collection_name=self.collection,
-            query_vector=("default", vector),
-            limit=6,
-            search_params=SearchParams(hnsw_ef=128)
-        )
+        try:
+            results = self.client.search_points(
+                collection_name=self.collection,
+                vector=vector,
+                vector_name="default",   # ← sua collection usa vetores nomeados
+                limit=6
+            )
+        except Exception as e:
+            logger.error(f"[RAG_QDRANT] Erro no search_points: {e}")
+            raise e
 
         docs = results.points
 
