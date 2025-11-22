@@ -54,11 +54,7 @@ if not st.session_state.perfil_ativo:
     st.warning("Selecione ou crie um perfil na lateral para começar.")
     st.stop()
 
-perfil_cliente = json.dumps(
-    st.session_state.perfis[st.session_state.perfil_ativo],
-    indent=2,
-    ensure_ascii=False
-)
+perfil_cliente = st.session_state.perfis[st.session_state.perfil_ativo]
 
 
 # ===============================
