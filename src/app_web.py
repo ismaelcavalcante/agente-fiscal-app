@@ -2,11 +2,10 @@ import streamlit as st
 from langchain_openai import ChatOpenAI
 from langfuse import Langfuse
 
-# módulos locais
+# Módulos internos
 from utils.logs import logger
 from utils.messages import (
     convert_history_to_lc,
-    dict_to_lc,
     lc_to_dict
 )
 
@@ -16,13 +15,14 @@ from graph.builder import build_graph
 
 
 # ==============================
-# 🟦 CONFIG STREAMLIT
+# 🌐 CONFIGURAÇÃO DO STREAMLIT
 # ==============================
 st.set_page_config(page_title="Consultor Fiscal IA", page_icon="💼")
 st.title("💼 Assistente Fiscal Inteligente")
 
+
 # ==============================
-# 🔑 CREDENCIAIS
+# 🔑 CREDENCIAIS (Streamlit Secrets)
 # ==============================
 OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
 QDRANT_URL = st.secrets["QDRANT_URL"]
@@ -31,22 +31,18 @@ TAVILY_API_KEY = st.secrets["TAVILY_API_KEY"]
 LANGFUSE_PUBLIC_KEY = st.secrets["LANGFUSE_PUBLIC_KEY"]
 LANGFUSE_SECRET_KEY = st.secrets["LANGFUSE_SECRET_KEY"]
 
-# ==============================
-# 📌 PERFIL DO CLIENTE
-# ==============================
-DEFAULT_PROFILE = """
-Empresa do regime geral/presumido, comércio varejista, atuação em múltiplos estados.
-"""
-
 
 # ==============================
-# 🧠 INICIALIZAÇÃO DE ESTADO
+# 🧠 ESTADO INICIAL
 # ==============================
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 if "perfil_cliente" not in st.session_state:
-    st.session_state.perfil_cliente = DEFAULT_PROFILE
+    st.session_state.perfil_cliente = """
+Empresa do regime geral/presumido, comércio varejista,
+atuando em múltiplos estados.
+"""
 
 if "thread_id" not in st.session_state:
     st.session_state.thread_id = "thread-1"
@@ -56,11 +52,11 @@ if "mcp" not in st.session_state:
 
 
 # ==============================
-# 🧠 LLM
+# 🤖 LLM
 # ==============================
 llm = ChatOpenAI(
-    api_key=OPENAI_API_KEY,
     model="gpt-4o-mini",
+    api_key=OPENAI_API_KEY,
     temperature=0.2,
 )
 
@@ -80,22 +76,22 @@ web_tool = build_web_tool(TAVILY_API_KEY)
 
 
 # ==============================
-# 🧠 LANGFUSE (SDK NOVO)
+# 🧭 LANGFUSE (SDK novo)
 # ==============================
 langfuse = Langfuse(
     public_key=LANGFUSE_PUBLIC_KEY,
-    secret_key=LANGFUSE_SECRET_KEY,
+    secret_key=LANGFUSE_SECRET_KEY
 )
 
 
 # ==============================
-# 🔗 GRAFO
+# 🔗 GRAFO (LangGraph)
 # ==============================
 app_graph = build_graph(llm, retriever, web_tool)
 
 
 # ==============================
-# 💬 EXIBIR HISTÓRICO
+# 📜 HISTÓRICO NO CHAT
 # ==============================
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
@@ -103,63 +99,65 @@ for msg in st.session_state.messages:
 
 
 # ==============================
-# 🔎 VISUALIZAR MCP
+# 🔎 VISUALIZAÇÃO DO MCP
 # ==============================
 with st.expander("🔍 Ver contexto MCP"):
     if st.session_state.mcp:
         st.json(st.session_state.mcp.model_dump())
     else:
-        st.caption("Nenhum MCP gerado ainda.")
+        st.caption("Nenhum MCP disponível ainda.")
 
 
 # ==============================
-# ✏️ INPUT
+# 💬 ENTRADA DO USUÁRIO
 # ==============================
 user_input = st.chat_input("Digite sua pergunta tributária...")
 
 
 # ==============================
-# 🚀 PROCESSAMENTO
+# 🚀 EXECUÇÃO DO AGENTE
 # ==============================
 if user_input:
 
-    # Exibe no chat
+    # Mostra no chat
     st.chat_message("user").write(user_input)
 
-    # Salva no histórico
+    # Salva histórico
     st.session_state.messages.append({"role": "user", "content": user_input})
 
-    # Converte histórico para LangChain
+    # Converte histórico para LangChain messages
     lc_messages = convert_history_to_lc(st.session_state.messages)
 
     try:
-        # EXECUTA O GRAFO (sem callbacks)
+        # EXECUTA O GRAFO → ATENÇÃO AQUI: CONFIGURABLE!!!
         result = app_graph.invoke(
             {
                 "messages": lc_messages,
                 "perfil_cliente": st.session_state.perfil_cliente,
-                "thread_id": st.session_state.thread_id,
+            },
+            config={
+                "configurable": {
+                    "thread_id": st.session_state.thread_id
+                }
             }
         )
 
-        # Resposta final
+        # PEGAR A RESPOSTA FINAL
         ai_msg = result["messages"][-1]
 
-        # Exibe
+        # Mostrar no chat
         st.chat_message("assistant").write(ai_msg.content)
 
-        # Salva no histórico
+        # Armazenar no histórico
         st.session_state.messages.append(
             lc_to_dict(ai_msg)
         )
 
-        # SALVAR MCP (SE EXISTIR)
+        # Se MCP foi gerado → salvar
         if "mcp" in result:
             st.session_state.mcp = result["mcp"]
 
-        # ==============================
-        # 📌 Tracking manual do Langfuse (novo SDK)
-        # ==============================
+        # TRACKING LANGFUSE (manual)
         langfuse.generation(
             name="resposta_final",
             model="gpt-4o-mini",
@@ -167,7 +165,7 @@ if user_input:
             output=ai_msg.content,
             metadata={
                 "thread_id": st.session_state.thread_id,
-                "perfil_cliente": st.session_state.perfil_cliente,
+                "perfil_cliente": st.session_state.perfil_cliente
             }
         )
 
