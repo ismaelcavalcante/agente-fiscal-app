@@ -1,7 +1,7 @@
 import streamlit as st
 from langchain_openai import ChatOpenAI
 from langfuse import Langfuse
-from langfuse.callbacks import CallbackHandler
+from langfuse.callback import CallbackHandler
 
 # módulos locais
 from utils.logs import logger
