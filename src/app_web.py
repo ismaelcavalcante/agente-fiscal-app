@@ -14,6 +14,15 @@ from langfuse import Langfuse
 from langfuse.callback import CallbackHandler as LangfuseCallbackHandler
 from protocol import ConsultaContext, FonteDocumento
 
+# --- FUNÇÃO UTILITY: TRADUZ O TIPO DA MENSAGEM ---
+def get_streamlit_role(message: Union[dict, BaseMessage]) -> str:
+    """Converte o objeto LangChain/LangGraph de volta para um role do Streamlit."""
+    if isinstance(message, dict):
+        return message["role"]
+    # Se for um objeto (BaseMessage), usamos o atributo .type e corrigimos 'human' para 'user'
+    return message.type.replace('human', 'user') 
+# ------------------------------------------------
+
 # --- 1. CONFIGURAÇÃO DA PÁGINA E INICIALIZAÇÃO DE ESTADO ---
 st.set_page_config(
     page_title="Agente Fiscal v4.2 (LangGraph + MCP)",
@@ -251,8 +260,11 @@ st.markdown("Pergunte sobre as leis (EC 132/LC 214) ou sobre notícias do congre
 
 # Exibe o histórico de mensagens
 for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    # Usamos o tradutor para garantir que a saída seja 'user' ou 'assistant'
+    with st.chat_message(get_streamlit_role(message)): 
+        # Se for um objeto, pegamos o atributo .content; senão, o valor do dict
+        content = message.content if hasattr(message, 'content') else message['content']
+        st.markdown(content)
 
 # Recebe a nova pergunta do usuário
 if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
