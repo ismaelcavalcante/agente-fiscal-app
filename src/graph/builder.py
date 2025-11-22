@@ -8,12 +8,16 @@ from graph.nodes import (
 )
 from utils.logs import logger
 
+# === STATE SCHEMA LIVRE ===
+# Python dict — flexível, sem validação rígida
+state_schema = dict
+
 
 def build_graph(llm, retriever, web_tool):
 
     logger.info("⛓️  Construindo LangGraph (versão profissional)...")
 
-    workflow = StateGraph()
+    workflow = StateGraph(state_schema)
 
     # Nós
     workflow.add_node("router", lambda state: node_router(state))
@@ -22,13 +26,13 @@ def build_graph(llm, retriever, web_tool):
     workflow.add_node("direct_answer", lambda state: node_direct_answer(state, llm))
     workflow.add_node("generate_final", lambda state: node_generate_final(state, llm))
 
-    # Estado inicial
+    # Inicial
     workflow.set_entry_point("router")
 
-    # Transições
+    # Condições de transição
     workflow.add_conditional_edges(
         "router",
-        lambda output: output,
+        lambda next_node: next_node,
         {
             "RAG": "rag_qdrant",
             "WEB": "web_search",
@@ -40,7 +44,6 @@ def build_graph(llm, retriever, web_tool):
     workflow.add_edge("web_search", "generate_final")
     workflow.add_edge("direct_answer", "generate_final")
 
-    # Encerrar
     workflow.add_edge("generate_final", END)
 
     graph = workflow.compile()

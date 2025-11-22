@@ -9,14 +9,17 @@ def node_router(state: dict):
 
     question = state["messages"][-1].content.lower()
 
-    GATILHOS_RAG = [
+    gatilhos_rag = [
         "ibs", "cbs", "lc 214", "ec 132",
-        "reforma tributária", "crédito", "tribut",
+        "tribut", "imposto", "crédito",
         "benefício fiscal", "não cumulatividade",
-        "substituição tributária", "imposto",
+        "regime", "substituição tributária",
+        "crédito de ibs", "crédito de cbs",
+        "insumo", "custo", "dedução",
     ]
 
-    if any(w in question for w in GATILHOS_RAG):
+    # se houver qualquer termo tributário → ir para RAG
+    if any(g in question for g in gatilhos_rag):
         return "RAG"
 
     if "lei" in question or "artigo" in question:

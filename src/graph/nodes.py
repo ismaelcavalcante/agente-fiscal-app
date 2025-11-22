@@ -3,7 +3,7 @@ from utils.logs import logger
 
 
 # ===========================
-# NODE: Roteador
+# ROUTER NODE
 # ===========================
 def node_router(state):
     from graph.router import node_router as router
@@ -11,16 +11,16 @@ def node_router(state):
 
 
 # ===========================
-# NODE: RAG com QDRANT
+# RAG NODE (QDRANT MANUAL)
 # ===========================
 def node_rag_qdrant(state, retriever):
-    logger.debug("📌 [node_rag_qdrant] Recebendo state...")
+    logger.debug("📌 [node_rag_qdrant] iniciando...")
 
-    question = state["messages"][-1].content
+    pergunta = state["messages"][-1].content
     perfil = state.get("perfil_cliente", "")
 
     try:
-        fontes, contexto = retriever.retrieve_documents(question, perfil)
+        fontes, contexto = retriever.retrieve_documents(pergunta, perfil)
 
         state["contexto_juridico_bruto"] = contexto
         state["sources_data"] = fontes
@@ -28,18 +28,19 @@ def node_rag_qdrant(state, retriever):
         return state
 
     except Exception as e:
-        logger.error(f"[RAG_QDRANT] Erro ao recuperar docs: {e}")
+        logger.error(f"[RAG_QDRANT] Erro: {e}")
+
         state["contexto_juridico_bruto"] = ""
         state["sources_data"] = []
         return state
 
 
 # ===========================
-# NODE: Web Search (Tavily)
+# WEB SEARCH NODE
 # ===========================
 def node_web_search(state, web_tool):
-    question = state["messages"][-1].content
-    result = web_tool.invoke({"query": question})
+    pergunta = state["messages"][-1].content
+    result = web_tool.invoke({"query": pergunta})
 
     state["contexto_juridico_bruto"] = result.get("answer", "")
     state["sources_data"] = result.get("sources", [])
@@ -48,16 +49,15 @@ def node_web_search(state, web_tool):
 
 
 # ===========================
-# NODE: Resposta Direta (sem RAG)
+# DIRECT ANSWER NODE
 # ===========================
 def node_direct_answer(state, llm):
-    logger.debug("📌 [node_direct_answer] Recebendo state...")
 
-    question = state["messages"][-1].content
+    pergunta = state["messages"][-1].content
 
     resposta = llm.invoke([
-        SystemMessage(content="Você é um consultor tributário especializado em IBS e CBS."),
-        HumanMessage(content=question)
+        SystemMessage(content="Você é um consultor tributário especializado."),
+        HumanMessage(content=pergunta)
     ])
 
     state["messages"].append(AIMessage(content=resposta.content))
@@ -65,13 +65,11 @@ def node_direct_answer(state, llm):
 
 
 # ===========================
-# NODE: Resposta Final
+# FINAL ANSWER NODE
 # ===========================
 def node_generate_final(state, llm):
 
-    logger.debug("📌 [node_generate_final] Gerando resposta final...")
-
-    question = state["messages"][-1].content
+    pergunta = state["messages"][-1].content
     perfil = state.get("perfil_cliente", "")
     contexto = state.get("contexto_juridico_bruto", "")
     fontes = state.get("sources_data", [])
@@ -80,30 +78,30 @@ def node_generate_final(state, llm):
 Você é um consultor tributário sênior.
 
 REGRAS:
-- Use EXCLUSIVAMENTE o contexto abaixo se ele existir.
-- Se o contexto estiver vazio, diga:
+- Use exclusivamente o CONTEXTO JURÍDICO abaixo.
+- Se o contexto estiver vazio, responda:
   "Com base no meu corpus atual (Qdrant), não encontrei fundamento jurídico para responder."
-- Sempre conecte a resposta ao perfil da empresa.
-- Seja objetivo, técnico e juridicamente preciso.
-- Cite as fontes retornadas pelo RAG.
+- Não invente leis, artigos ou jurisprudência.
+- Conecte a resposta ao PERFIL da empresa.
+- Cite as FONTES retornadas pelo Qdrant.
 
 PERFIL DO CLIENTE:
 {perfil}
 
-CONTEXTO JURÍDICO RECUPERADO (RAG):
+CONTEXTO JURÍDICO RECUPERADO:
 {contexto}
 
 FONTES:
 {fontes}
 
 Pergunta:
-{question}
+{pergunta}
 """
 
-    final = llm.invoke([
+    resposta = llm.invoke([
         SystemMessage(content=prompt),
-        HumanMessage(content=question)
+        HumanMessage(content=pergunta)
     ])
 
-    state["messages"].append(AIMessage(content=final.content))
+    state["messages"].append(AIMessage(content=resposta.content))
     return state
