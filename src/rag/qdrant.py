@@ -1,36 +1,15 @@
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue, SearchParams
+from qdrant_client.models import SearchParams
 from langchain_openai import OpenAIEmbeddings
 from utils.logs import logger
 
 
-TRIBUTARY_EXPANSION = [
-    "IBS", "CBS", "EC 132", "LC 214",
-    "tributação", "crédito", "não cumulatividade",
-    "benefício fiscal", "regra fiscal", "ICMS"
-]
-
-
-def expand_query(query, client_profile):
-    return (
-        f"{query}\n\n"
-        f"Perfil: {client_profile}\n"
-        f"Palavras-chave: {', '.join(TRIBUTARY_EXPANSION)}"
-    )
-
-
 def build_retriever(url, api_key, collection, embedding_model, openai_key):
+
     logger.info("Inicializando retriever Qdrant...")
 
-    embeddings = OpenAIEmbeddings(
-        model=embedding_model,
-        api_key=openai_key
-    )
-
-    client = QdrantClient(
-        url=url,
-        api_key=api_key,
-    )
+    client = QdrantClient(url=url, api_key=api_key)
+    embeddings = OpenAIEmbeddings(model=embedding_model, api_key=openai_key)
 
     return RetrieverWrapper(client, embeddings, collection)
 
@@ -42,52 +21,34 @@ class RetrieverWrapper:
         self.embeddings = embeddings
         self.collection = collection
 
-    def retrieve_documents(self, query, client_profile=""):
+    def retrieve_documents(self, query, perfil):
 
-        enriched = expand_query(query, client_profile)
+        enriched = f"{query}\n\nPerfil:{perfil}"
 
-        logger.error("=== DEBUG RAG (manual retriever) ===")
+        logger.error("=== DEBUG RAG (manual) ===")
         logger.error(f"Consulta enriquecida: {enriched}")
 
-        # 🔥 1. Gerar embedding da consulta
         vector = self.embeddings.embed_query(enriched)
 
-        # 🔥 2. Buscar pontos usando API MODERNA
         results = self.client.query_points(
             collection_name=self.collection,
             query=vector,
             limit=6,
-            search_params=SearchParams(
-                hnsw_ef=128
-            )
+            search_params=SearchParams(hnsw_ef=128)
         )
 
         docs = results.points
 
-        logger.error(f"Quantidade de documentos retornados: {len(docs)}")
+        logger.error(f"Docs retornados: {len(docs)}")
 
-        # 🔥 3. Extrair contexto
-        metadata_list = []
-        full_context = []
+        metadata = []
+        contexto = []
 
-        for i, point in enumerate(docs):
-            md = point.payload or {}
-            texto = md.get("page_content", "")
+        for i, p in enumerate(docs):
+            text = p.payload.get("page_content", "")
+            metadata.append(p.payload)
+            contexto.append(f"[{p.payload.get('document_type')}] {text}")
 
-            logger.error(
-                f"[DOC {i}] page={md.get('page')} "
-                f"type={md.get('document_type')} "
-                f"conteudo={texto[:200]}..."
-            )
+            logger.error(f"[DOC {i}] {text[:200]}...")
 
-            metadata_list.append({
-                "source": md.get("source", "QDRANT"),
-                "page": md.get("page"),
-                "document_type": md.get("document_type")
-            })
-
-            full_context.append(
-                f"[{md.get('document_type')} pg {md.get('page')}] {texto}"
-            )
-
-        return metadata_list, "\n\n".join(full_context)
+        return metadata, "\n\n".join(contexto)

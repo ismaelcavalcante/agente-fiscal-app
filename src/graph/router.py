@@ -1,24 +1,21 @@
 from utils.logs import logger
 
-
 def node_router(state: dict):
+
     logger.info("Roteador analisando pergunta...")
 
-    if not state or "messages" not in state:
+    msg = state.get("messages", [])
+    if not msg:
         return "DIRECT"
 
-    question = state["messages"][-1].content.lower()
+    question = msg[-1].content.lower()
 
     gatilhos_rag = [
-        "ibs", "cbs", "lc 214", "ec 132",
-        "tribut", "imposto", "crédito",
+        "ibs", "cbs", "ec 132", "lc 214",
+        "crédito", "insumo", "tribut", "imposto",
         "benefício fiscal", "não cumulatividade",
-        "regime", "substituição tributária",
-        "crédito de ibs", "crédito de cbs",
-        "insumo", "custo", "dedução",
     ]
 
-    # se houver qualquer termo tributário → ir para RAG
     if any(g in question for g in gatilhos_rag):
         return "RAG"
 

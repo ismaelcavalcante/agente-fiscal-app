@@ -8,9 +8,8 @@ from graph.nodes import (
 )
 from utils.logs import logger
 
-# === STATE SCHEMA LIVRE ===
-# Python dict — flexível, sem validação rígida
-state_schema = dict
+
+state_schema = dict  # simples e estável
 
 
 def build_graph(llm, retriever, web_tool):
@@ -19,20 +18,17 @@ def build_graph(llm, retriever, web_tool):
 
     workflow = StateGraph(state_schema)
 
-    # Nós
-    workflow.add_node("router", lambda state: node_router(state))
-    workflow.add_node("rag_qdrant", lambda state: node_rag_qdrant(state, retriever))
-    workflow.add_node("web_search", lambda state: node_web_search(state, web_tool))
-    workflow.add_node("direct_answer", lambda state: node_direct_answer(state, llm))
-    workflow.add_node("generate_final", lambda state: node_generate_final(state, llm))
+    workflow.add_node("router", lambda s: node_router(s))
+    workflow.add_node("rag_qdrant", lambda s: node_rag_qdrant(s, retriever))
+    workflow.add_node("web_search", lambda s: node_web_search(s, web_tool))
+    workflow.add_node("direct_answer", lambda s: node_direct_answer(s, llm))
+    workflow.add_node("generate_final", lambda s: node_generate_final(s, llm))
 
-    # Inicial
     workflow.set_entry_point("router")
 
-    # Condições de transição
     workflow.add_conditional_edges(
         "router",
-        lambda next_node: next_node,
+        lambda next_step: next_step,
         {
             "RAG": "rag_qdrant",
             "WEB": "web_search",
@@ -43,7 +39,6 @@ def build_graph(llm, retriever, web_tool):
     workflow.add_edge("rag_qdrant", "generate_final")
     workflow.add_edge("web_search", "generate_final")
     workflow.add_edge("direct_answer", "generate_final")
-
     workflow.add_edge("generate_final", END)
 
     graph = workflow.compile()
