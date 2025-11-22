@@ -11,7 +11,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langfuse import Langfuse
-from .protocol import ConsultaContext, FonteDocumento
+from protocol import ConsultaContext, FonteDocumento
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA E INICIALIZAÇÃO DE ESTADO ---
 st.set_page_config(
