@@ -2,20 +2,21 @@ import streamlit as st
 from openai import OpenAI
 from qdrant_client import QdrantClient, models
 import os
-from typing import TypedDict, Annotated, List, Dict, Any, Union # Adicionado Union
+from typing import TypedDict, Annotated, List, Dict, Any, Union
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import Qdrant
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain.tools.retriever import create_retriever_tool
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage # Adicionado BaseMessage
-from langfuse import Langfuse
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+# REMOVIDO: from langfuse import Langfuse
+# REMOVIDO: from langfuse.callback import CallbackHandler as LangfuseCallbackHandler
 from protocol import ConsultaContext, FonteDocumento
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA E INICIALIZAÇÃO DE ESTADO ---
 st.set_page_config(
-    page_title="Agente Fiscal v4.2 (LangGraph + MCP)",
+    page_title="Agente Fiscal v4.2 (LangGraph)",
     page_icon="🤖",
     layout="wide"
 )
@@ -38,17 +39,6 @@ NOME_DA_COLECAO = "leis_fiscais_v1"
 MODELO_LLM = st.secrets["MODELO_LLM"]
 MODELO_EMBEDDING = st.secrets["MODELO_EMBEDDING"]
 
-# --- FUNÇÃO UTILITY: TRADUZ O TIPO DA MENSAGEM (CORRIGIDO) ---
-def get_streamlit_role(message: Union[dict, BaseMessage]) -> str:
-    """Converte o objeto LangChain/LangGraph de volta para um role do Streamlit."""
-    if isinstance(message, dict):
-        # Para mensagens antigas ou as que colocamos como dict (com "role")
-        return message["role"]
-    # Se for um objeto BaseMessage, usamos o atributo .type e corrigimos 'human' para 'user'
-    return message.type.replace('human', 'user') 
-# -----------------------------------------------------------------
-
-
 # --- 2. DEFINIÇÃO DE ESTADO DO LANGGRAPH ---
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], lambda x, y: x + y]
@@ -59,37 +49,30 @@ class AgentState(TypedDict):
 
 @st.cache_resource
 def carregar_servicos_e_grafo():
-    # Esta função é executada UMA VEZ no Streamlit Cloud.
-    # Se falhar, ela retorna None, None.
     try:
-        # --- 1. LEITURA E VALIDAÇÃO DE SECRETS ---
+        # --- BLOCO DE LEITURA E VALIDAÇÃO DE SECRETS ---
         secrets_dict = {
             "OPENAI_API_KEY": st.secrets["OPENAI_API_KEY"],
             "QDRANT_URL": st.secrets["QDRANT_URL"],
             "QDRANT_API_KEY": st.secrets["QDRANT_API_KEY"],
             "TAVILY_API_KEY": st.secrets["TAVILY_API_KEY"],
-            "LANGFUSE_PUBLIC_KEY": st.secrets["LANGFUSE_PUBLIC_KEY"],
-            "LANGFUSE_SECRET_KEY": st.secrets["LANGFUSE_SECRET_KEY"],
-            "LANGFUSE_BASE_URL": st.secrets.get("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
+            # REMOVIDO: LANGFUSE SECRETS
         }
 
-        # 2. Inicializar Clientes
+        # 1. Carregar Clientes Principais
         llm = ChatOpenAI(api_key=secrets_dict["OPENAI_API_KEY"], model=MODELO_LLM, temperature=0)
         embeddings = OpenAIEmbeddings(api_key=secrets_dict["OPENAI_API_KEY"], model=MODELO_EMBEDDING)
         qdrant_client = QdrantClient(url=secrets_dict["QDRANT_URL"], api_key=secrets_dict["QDRANT_API_KEY"])
         
-        # 3. Inicializar Langfuse
-        os.environ["TAVILY_API_KEY"] = secrets_dict["TAVILY_API_KEY"]
-        langfuse = Langfuse(public_key=secrets_dict["LANGFUSE_PUBLIC_KEY"], secret_key=secrets_dict["LANGFUSE_SECRET_KEY"], host=secrets_dict["LANGFUSE_BASE_URL"])
-
-        # 4. Configuração do Retriever (Qdrant)
+        # 2. Configuração do Retriever (Qdrant)
+        os.environ["TAVILY_API_KEY"] = secrets_dict["TAVILY_API_KEY"] # Necessário para a ferramenta Tavily
         qdrant_store = Qdrant(client=qdrant_client, collection_name=NOME_DA_COLECAO, embeddings=embeddings)
         qdrant_filter = models.Filter(should=[
             models.FieldCondition(key="metadata.regime_tax", match=models.MatchText(text="Simples Nacional")),
             models.FieldCondition(key="metadata.regime_tax", match=models.MatchText(text="Geral/Presumido")),
         ])
         
-        # 5. Criação da Ferramenta (Tool Fix)
+        # 3. Criação da Ferramenta (Tool Fix)
         retriever_biblioteca_obj = qdrant_store.as_retriever(search_kwargs={"k": 7, "filter": qdrant_filter})
         biblioteca_tool = create_retriever_tool(
             retriever_biblioteca_obj,
@@ -116,7 +99,7 @@ def carregar_servicos_e_grafo():
             pergunta = state["messages"][-1].content
             perfil = state["perfil_cliente"]
             query = f"Perfil: {perfil}\nPergunta: {pergunta}"
-            docs = retriever_biblioteca_obj.invoke(query) # Usar o objeto Retriever
+            docs = retriever_biblioteca_obj.invoke(query)
             contexto_text = "\n---\n".join([doc.page_content for doc in docs])
             metadados = [{"source": doc.metadata.get('document_type', 'Lei'), "page": doc.metadata.get('page'), "type": doc.metadata.get('document_type')} for doc in docs]
             msg = AIMessage(content=f"Contexto Biblioteca: {contexto_text}")
@@ -131,7 +114,6 @@ def carregar_servicos_e_grafo():
             return {"messages": [msg], "sources_data": metadados}
 
         def no_gerador_resposta(state: AgentState):
-            # ... (Lógica de geração e MCP validation) ...
             messages = state["messages"]
             perfil = state["perfil_cliente"]
             contexto_msg = next((msg for msg in reversed(messages) if isinstance(msg, AIMessage) and ('Contexto' in msg.content)), None)
@@ -149,6 +131,7 @@ def carregar_servicos_e_grafo():
                 except Exception:
                     pass 
 
+            # CONSTRUIR E VALIDAR O PROTOCOLO (MCP)
             try:
                 context_protocol = ConsultaContext(
                     trace_id=st.session_state.thread_id, perfil_cliente=perfil, pergunta_cliente=messages[-1].content,
@@ -158,15 +141,19 @@ def carregar_servicos_e_grafo():
             except Exception as e:
                 raise ValueError(f"Falha na validação do MCP (ContextProtocolModel): {e}")
 
-            prompt_mestre_msg = HumanMessage(content=f"""{context_protocol.prompt_mestre}
+            # Gerar Resposta (Usando o Protocolo Validado)
+            prompt_mestre_msg = HumanMessage(
+                content=f"""
+                {context_protocol.prompt_mestre}
                 Com base no contexto a seguir, responda à última pergunta do usuário.
                 **Contexto Jurídico Validado:** {context_protocol.contexto_juridico_bruto}
-                """)
+                """
+            )
             response = llm.invoke(messages + [prompt_mestre_msg])
             
             return {"messages": [AIMessage(content=response.content)], "mcp_data": context_protocol.model_dump_json()}
 
-        # --- COMPILAÇÃO DO GRAFO ---
+        # --- COMPILAÇÃO DO GRAFO (O MAESTRO) ---
         workflow = StateGraph(AgentState)
         workflow.add_node("usar_biblioteca_fiscal", no_busca_biblioteca)
         workflow.add_node("usar_busca_web", no_busca_web)
@@ -191,18 +178,18 @@ def carregar_servicos_e_grafo():
         except Exception:
             st.session_state.db_count = 0
 
-        return app_graph, langfuse 
+        # RETORNO DA FUNÇÃO: AGENTE E LANGFUSE É NONE
+        return app_graph, None 
 
     except KeyError as e:
-        # Pega a falha de Secret e retorna None
         st.error(f"ERRO FATAL: Secret {e} não encontrada. Verifique as 6 chaves no painel do Streamlit.")
         return None, None
     except Exception as e:
-        # Pega qualquer outra falha (conexão, etc.)
         st.error(f"ERRO DE CONEXÃO: O agente não pôde ser carregado. Detalhe: {e}")
         return None, None
 
 # --- 4. CARREGAR OS SERVIÇOS NA INICIALIZAÇÃO ---
+# Agora o Langfuse NÃO é retornado, a variável fica None, e o código não tenta usá-lo.
 agente, langfuse = carregar_servicos_e_grafo()
 
 # --- 5. INTERFACE DA BARRA LATERAL (SIDEBAR) ---
@@ -226,7 +213,7 @@ with st.sidebar:
     st.markdown(f"**Fatias na Biblioteca:** `{st.session_state.get('db_count', 0)}`")
     st.markdown("EC 132 e LC 214")
     st.markdown("**Ferramenta de Web:** `Tavily Search`")
-    st.markdown("**Monitoramento:** `Langfuse Ativo`")
+    st.markdown("**Monitoramento:** `Langfuse Desativado`")
 
 
 # --- 6. INTERFACE PRINCIPAL DO CHAT ---
@@ -243,36 +230,22 @@ for message in st.session_state.messages:
 # Recebe a nova pergunta do usuário
 if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
     
-    # 1. Adiciona a mensagem do usuário ao histórico (Formato seguro de DICT)
+    # ... (O restante da lógica de execução que não usa o Langfuse) ...
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    if agente and langfuse:
+    if agente: # Agora só checamos se o Agente está pronto
         with st.chat_message("assistant"):
-            with st.spinner("O Agente está pensando... (Rastreando com Langfuse)..."):
+            with st.spinner("O Agente está pensando..."):
                 
-                # Prepara os Callbacks do Langfuse
-                langfuse_callbacks = [] 
-                if langfuse:
-                    langfuse_callbacks = [langfuse.get_langchain_callback(
-                        user_id="usuario_streamlit",
-                        session_id=st.session_state.thread_id
-                    )]
-                
+                # Prepara os Callbacks: Agora é sempre uma lista vazia, eliminando a falha
                 config = {
                     "configurable": {"thread_id": st.session_state.thread_id},
-                    "callbacks": langfuse_callbacks
+                    "callbacks": [] 
                 }
-                
-                # Converte o histórico de DICT para BaseMessage para o LangGraph
-                mensagens_para_grafo = [
-                    HumanMessage(content=msg['content']) if msg['role'] == 'user' else AIMessage(content=msg['content'])
-                    for msg in st.session_state.messages
-                ]
-                
                 inputs = {
-                    "messages": mensagens_para_grafo, # <--- INPUT CORRIGIDO
+                    "messages": [HumanMessage(content=prompt)],
                     "perfil_cliente": st.session_state.client_profile
                 }
                 
