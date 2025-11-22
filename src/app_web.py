@@ -1,7 +1,6 @@
 import streamlit as st
 from langchain_openai import ChatOpenAI
 from langfuse import Langfuse
-from langfuse.callback import CallbackHandler
 
 # módulos locais
 from utils.logs import logger
@@ -23,7 +22,7 @@ st.set_page_config(page_title="Consultor Fiscal IA", page_icon="💼")
 st.title("💼 Assistente Fiscal Inteligente")
 
 # ==============================
-# 🔑 CREDENCIAIS (use st.secrets no Streamlit Cloud)
+# 🔑 CREDENCIAIS
 # ==============================
 OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
 QDRANT_URL = st.secrets["QDRANT_URL"]
@@ -31,7 +30,6 @@ QDRANT_API_KEY = st.secrets["QDRANT_API_KEY"]
 TAVILY_API_KEY = st.secrets["TAVILY_API_KEY"]
 LANGFUSE_PUBLIC = st.secrets["LANGFUSE_PUBLIC"]
 LANGFUSE_SECRET = st.secrets["LANGFUSE_SECRET"]
-
 
 # ==============================
 # 📌 PERFIL DO CLIENTE
@@ -53,9 +51,12 @@ if "perfil_cliente" not in st.session_state:
 if "thread_id" not in st.session_state:
     st.session_state.thread_id = "thread-1"
 
+if "mcp" not in st.session_state:
+    st.session_state.mcp = None
+
 
 # ==============================
-# 🧠 MODELO LLM (OpenAI)
+# 🧠 LLM
 # ==============================
 llm = ChatOpenAI(
     api_key=OPENAI_API_KEY,
@@ -65,7 +66,7 @@ llm = ChatOpenAI(
 
 
 # ==============================
-# 🔍 FERRAMENTAS (Qdrant + Web)
+# 🔍 RAG TOOLS
 # ==============================
 retriever = build_retriever(
     qdrant_url=QDRANT_URL,
@@ -86,11 +87,6 @@ langfuse = Langfuse(
     secret_key=LANGFUSE_SECRET,
 )
 
-callback_handler = CallbackHandler(
-    user_id="user",
-    session_id=st.session_state.thread_id
-)
-
 
 # ==============================
 # 🔗 GRAFO
@@ -99,23 +95,25 @@ app_graph = build_graph(llm, retriever, web_tool)
 
 
 # ==============================
-# 💬 EXIBIR HISTÓRICO NO CHAT
+# 💬 EXIBIR HISTÓRICO
 # ==============================
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
+
 # ==============================
-# 💬 EXIBIR CONTEXTO MCP
+# 🔎 VISUALIZAR MCP
 # ==============================
 with st.expander("🔍 Ver contexto MCP"):
-    if "mcp" in st.session_state:
-        st.json(st.session_state["mcp"].model_dump())
+    if st.session_state.mcp:
+        st.json(st.session_state.mcp.model_dump())
     else:
         st.caption("Nenhum MCP gerado ainda.")
 
+
 # ==============================
-# ✏️ CAMPO DE ENTRADA
+# ✏️ INPUT
 # ==============================
 user_input = st.chat_input("Digite sua pergunta tributária...")
 
@@ -125,39 +123,54 @@ user_input = st.chat_input("Digite sua pergunta tributária...")
 # ==============================
 if user_input:
 
-    # 1. Exibe no chat
+    # Exibe no chat
     st.chat_message("user").write(user_input)
 
-    # 2. Salva no histórico
+    # Salva no histórico
     st.session_state.messages.append({"role": "user", "content": user_input})
 
-    # 3. Converte histórico para LangChain
+    # Converte histórico para LangChain
     lc_messages = convert_history_to_lc(st.session_state.messages)
 
-    # 4. EXECUTA GRAFO
     try:
+        # EXECUTA O GRAFO (sem callbacks)
         result = app_graph.invoke(
             {
                 "messages": lc_messages,
                 "perfil_cliente": st.session_state.perfil_cliente,
                 "thread_id": st.session_state.thread_id,
-            },
-            config={"callbacks": [callback_handler]}
+            }
         )
 
+        # Resposta final
         ai_msg = result["messages"][-1]
 
-        # 5. Exibe resposta
+        # Exibe
         st.chat_message("assistant").write(ai_msg.content)
 
-        # 6. Salva no histórico como dict
+        # Salva no histórico
         st.session_state.messages.append(
             lc_to_dict(ai_msg)
+        )
+
+        # SALVAR MCP (SE EXISTIR)
+        if "mcp" in result:
+            st.session_state.mcp = result["mcp"]
+
+        # ==============================
+        # 📌 Tracking manual do Langfuse (novo SDK)
+        # ==============================
+        langfuse.generation(
+            name="resposta_final",
+            model="gpt-4o-mini",
+            input=user_input,
+            output=ai_msg.content,
+            metadata={
+                "thread_id": st.session_state.thread_id,
+                "perfil_cliente": st.session_state.perfil_cliente,
+            }
         )
 
     except Exception as e:
         st.error("Ocorreu um erro durante a análise.")
         logger.error(f"ERRO NO GRAFO: {e}")
-
-if "mcp" in result:
-    st.session_state["mcp"] = result["mcp"]
