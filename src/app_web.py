@@ -88,7 +88,7 @@ retriever = build_retriever(
     qdrant_api_key=st.secrets["QDRANT_API_KEY"],
     collection_name="leis_fiscais_v1",
     embedding_model_name="text-embedding-3-large",
-    openai_api_key=st.secrets["OPENAI_API_KEY"],
+    openai_api_key=st.secrets["OPENAI_API_KEY"],   
 )
 
 web_tool = build_web_tool(st.secrets["TAVILY_API_KEY"])
