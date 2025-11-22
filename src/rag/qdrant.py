@@ -1,110 +1,93 @@
 from qdrant_client import QdrantClient
-from langchain_community.vectorstores import Qdrant
+from qdrant_client.models import Filter, FieldCondition, MatchValue, SearchParams
 from langchain_openai import OpenAIEmbeddings
-from utils.logs import logger 
-
+from utils.logs import logger
 
 
 TRIBUTARY_EXPANSION = [
     "IBS", "CBS", "EC 132", "LC 214",
-    "tributação", "não cumulatividade",
-    "crédito", "compensação", "fiscal",
-    "imposto", "ICMS", "PIS", "COFINS"
+    "tributação", "crédito", "não cumulatividade",
+    "benefício fiscal", "regra fiscal", "ICMS"
 ]
 
 
-def expand_query(query: str, client_profile: str) -> str:
+def expand_query(query, client_profile):
     return (
         f"{query}\n\n"
-        f"Perfil do cliente: {client_profile}\n"
-        f"Palavras-chave relacionadas: {', '.join(TRIBUTARY_EXPANSION)}"
+        f"Perfil: {client_profile}\n"
+        f"Palavras-chave: {', '.join(TRIBUTARY_EXPANSION)}"
     )
 
 
-def load_qdrant_client(url: str, api_key: str):
-    try:
-        client = QdrantClient(url=url, api_key=api_key)
-        logger.info("QdrantClient conectado com sucesso.")
-        return client
-    except Exception as e:
-        logger.error(f"Erro ao conectar Qdrant: {e}")
-        raise
-
-
-def build_retriever(
-    qdrant_url: str,
-    qdrant_api_key: str,
-    collection_name: str,
-    embedding_model_name: str,
-    openai_api_key: str
-):
+def build_retriever(url, api_key, collection, embedding_model, openai_key):
     logger.info("Inicializando retriever Qdrant...")
 
     embeddings = OpenAIEmbeddings(
-        model=embedding_model_name,
-        api_key=openai_api_key
+        model=embedding_model,
+        api_key=openai_key
     )
 
-    client = load_qdrant_client(qdrant_url, qdrant_api_key)
-
-    store = Qdrant(
-        client=client,
-        collection_name=collection_name,
-        embeddings=embeddings,
-        vector_name="default"
+    client = QdrantClient(
+        url=url,
+        api_key=api_key,
     )
 
-    retriever = store.as_retriever(
-        search_type="mmr",
-        search_kwargs={"k": 6, "fetch_k": 25, "lambda_mult": 0.3}
-    )
-
-    logger.info("Retriever Qdrant carregado com sucesso.")
-    return RetrieverWrapper(retriever)
+    return RetrieverWrapper(client, embeddings, collection)
 
 
 class RetrieverWrapper:
-    def __init__(self, retriever):
-        self.retriever = retriever
+
+    def __init__(self, client, embeddings, collection):
+        self.client = client
+        self.embeddings = embeddings
+        self.collection = collection
 
     def retrieve_documents(self, query, client_profile=""):
 
         enriched = expand_query(query, client_profile)
 
-        try:
-            docs = self.retriever.invoke(enriched)
+        logger.error("=== DEBUG RAG (manual retriever) ===")
+        logger.error(f"Consulta enriquecida: {enriched}")
 
-            # DEBUG COMPLETO
-            logger.error("=== DEBUG RAG ===")
-            logger.error(f"Consulta enriquecida: {enriched}")
-            logger.error(f"Quantidade de documentos retornados: {len(docs)}")
+        # 🔥 1. Gerar embedding da consulta
+        vector = self.embeddings.embed_query(enriched)
 
-            for i, d in enumerate(docs):
-                logger.error(
-                    f"[DOC {i}] page={d.metadata.get('page')} "
-                    f"type={d.metadata.get('document_type')} "
-                    f"conteudo_inicio={d.page_content[:200]}..."
-                )
+        # 🔥 2. Buscar pontos usando API MODERNA
+        results = self.client.query_points(
+            collection_name=self.collection,
+            query=vector,
+            limit=6,
+            search_params=SearchParams(
+                hnsw_ef=128
+            )
+        )
 
-            metadata_list = [
-                {
-                    "source": d.metadata.get("source", "QDRANT"),
-                    "page": d.metadata.get("page"),
-                    "document_type": d.metadata.get("document_type", "LEI"),
-                }
-                for d in docs
-            ]
+        docs = results.points
 
-            contexto = "\n\n".join(
-                [
-                    f"[{d.metadata.get('document_type', 'Lei')} pg {d.metadata.get('page', '?')}] "
-                    f"{d.page_content}"
-                    for d in docs
-                ]
+        logger.error(f"Quantidade de documentos retornados: {len(docs)}")
+
+        # 🔥 3. Extrair contexto
+        metadata_list = []
+        full_context = []
+
+        for i, point in enumerate(docs):
+            md = point.payload or {}
+            texto = md.get("page_content", "")
+
+            logger.error(
+                f"[DOC {i}] page={md.get('page')} "
+                f"type={md.get('document_type')} "
+                f"conteudo={texto[:200]}..."
             )
 
-            return metadata_list, contexto
+            metadata_list.append({
+                "source": md.get("source", "QDRANT"),
+                "page": md.get("page"),
+                "document_type": md.get("document_type")
+            })
 
-        except Exception as e:
-            logger.error(f"Erro durante busca no Qdrant: {e}")
-            return [], ""
+            full_context.append(
+                f"[{md.get('document_type')} pg {md.get('page')}] {texto}"
+            )
+
+        return metadata_list, "\n\n".join(full_context)

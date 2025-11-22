@@ -84,11 +84,11 @@ llm = ChatOpenAI(
 #  RAG + Web Search
 # ===============================
 retriever = build_retriever(
-    qdrant_url=st.secrets["QDRANT_URL"],
-    qdrant_api_key=st.secrets["QDRANT_API_KEY"],
-    collection_name="leis_fiscais_v1",
-    embedding_model_name="text-embedding-3-large",
-    openai_api_key=st.secrets["OPENAI_API_KEY"],   
+    url=st.secrets["QDRANT_URL"],
+    api_key=st.secrets["QDRANT_API_KEY"],
+    collection="leis_fiscais_v1",
+    embedding_model="text-embedding-3-large",
+    openai_key=st.secrets["OPENAI_API_KEY"],
 )
 
 web_tool = build_web_tool(st.secrets["TAVILY_API_KEY"])
@@ -138,9 +138,7 @@ if user_input:
                 "messages": lc_messages,
                 "perfil_cliente": perfil_cliente,
             },
-            config={
-                "configurable": {"thread_id": st.session_state.thread_id}
-            }
+            config={"configurable": {"thread_id": st.session_state.thread_id}}
         )
 
         ai_msg = result["messages"][-1]
