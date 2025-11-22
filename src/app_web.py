@@ -1,6 +1,7 @@
 import streamlit as st
 from langchain_openai import ChatOpenAI
 from langfuse import Langfuse
+from langchain_core.messages import HumanMessage, AIMessage
 
 from components.perfil_select import selecionar_perfil
 from components.perfil_form import editar_perfil_form
@@ -124,7 +125,7 @@ user_input = st.chat_input("Digite sua pergunta tributária...")
 # ===============================
 if user_input:
     st.chat_message("user").write(user_input)
-    st.session_state.messages.append({"role": "user", "content": user_input})
+    st.session_state.messages.append(HumanMessage(content=user_input))
 
     lc_messages = convert_history_to_lc(st.session_state.messages)
 
@@ -142,9 +143,7 @@ if user_input:
 
         st.chat_message("assistant").write(ai_msg.content)
 
-        st.session_state.messages.append(
-            lc_to_dict(ai_msg)
-        )
+        st.session_state.messages.append(ai_msg)
 
         langfuse.generation(
             name="resposta_final",
