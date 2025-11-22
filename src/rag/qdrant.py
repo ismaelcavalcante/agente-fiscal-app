@@ -3,17 +3,6 @@ from qdrant_client.models import SearchParams
 from langchain_openai import OpenAIEmbeddings
 from utils.logs import logger
 
-
-def build_retriever(url, api_key, collection, embedding_model, openai_key):
-
-    logger.info("Inicializando retriever Qdrant...")
-
-    client = QdrantClient(url=url, api_key=api_key)
-    embeddings = OpenAIEmbeddings(model=embedding_model, api_key=openai_key)
-
-    return RetrieverWrapper(client, embeddings, collection)
-
-
 class RetrieverWrapper:
 
     def __init__(self, client, embeddings, collection):
@@ -22,7 +11,6 @@ class RetrieverWrapper:
         self.collection = collection
 
     def retrieve_documents(self, query, perfil):
-
         enriched = f"{query}\n\nPerfil:{perfil}"
 
         logger.error("=== DEBUG RAG (manual) ===")
@@ -44,11 +32,22 @@ class RetrieverWrapper:
         metadata = []
         contexto = []
 
-        for i, p in enumerate(docs):
-            text = p.payload.get("page_content", "")
-            metadata.append(p.payload)
-            contexto.append(f"[{p.payload.get('document_type')}] {text}")
+        for i, point in enumerate(docs):
+            payload = point.payload or {}
+            texto = payload.get("page_content", "")
 
-            logger.error(f"[DOC {i}] {text[:200]}...")
+            logger.error(f"[DOC {i}] {texto[:200]}")
+
+            metadata.append(payload)
+            contexto.append(texto)
 
         return metadata, "\n\n".join(contexto)
+
+
+def build_retriever(url, api_key, collection, embedding_model, openai_key):
+    logger.info("Inicializando retriever Qdrant...")
+
+    client = QdrantClient(url=url, api_key=api_key)
+    embeddings = OpenAIEmbeddings(model=embedding_model, api_key=openai_key)
+
+    return RetrieverWrapper(client, embeddings, collection)

@@ -5,9 +5,8 @@ def sanitize_messages(history):
     for msg in history:
         if isinstance(msg, BaseMessage):
             fixed.append(msg)
-            continue
-        if isinstance(msg, dict):
-            role = msg.get("role")
+        elif isinstance(msg, dict):
+            role = msg.get("role", "user")
             content = msg.get("content", "")
             if role == "assistant":
                 fixed.append(AIMessage(content=content))

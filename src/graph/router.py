@@ -4,25 +4,25 @@ def node_router(state: dict):
 
     logger.info("Roteador analisando pergunta...")
 
-    msg = state.get("messages", [])
-    if not msg:
-        return "DIRECT"
+    messages = state.get("messages", [])
+    if not messages:
+        return {"__route__": "DIRECT"}
 
-    question = msg[-1].content.lower()
+    question = messages[-1].content.lower()
 
     gatilhos_rag = [
         "ibs", "cbs", "ec 132", "lc 214",
-        "crédito", "insumo", "tribut", "imposto",
-        "benefício fiscal", "não cumulatividade",
+        "crédito", "insumo", "benefício fiscal",
+        "tribut", "imposto", "não cumulatividade"
     ]
 
     if any(g in question for g in gatilhos_rag):
-        return "RAG"
+        return {"__route__": "RAG"}
 
     if "lei" in question or "artigo" in question:
-        return "RAG"
+        return {"__route__": "RAG"}
 
     if "pesquise" in question or "notícia" in question:
-        return "WEB"
+        return {"__route__": "WEB"}
 
-    return "DIRECT"
+    return {"__route__": "DIRECT"}

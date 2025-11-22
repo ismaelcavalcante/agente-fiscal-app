@@ -11,21 +11,13 @@ def node_rag_qdrant(state, retriever):
     try:
         fontes, contexto = retriever.retrieve_documents(question, perfil)
 
-        if not isinstance(state, dict):
-            logger.error("STATE CORROMPIDO NO RAG – RECRIANDO")
-            state = {}
-
-        state["contexto_juridico_bruto"] = contexto if isinstance(contexto, str) else ""
-        state["sources_data"] = fontes if isinstance(fontes, list) else []
+        state["contexto_juridico_bruto"] = contexto or ""
+        state["sources_data"] = fontes or []
 
         return state
 
     except Exception as e:
         logger.error(f"[RAG_QDRANT] Erro: {e}")
-
-        if not isinstance(state, dict):
-            state = {}
-
         state["contexto_juridico_bruto"] = ""
         state["sources_data"] = []
         return state
@@ -33,6 +25,7 @@ def node_rag_qdrant(state, retriever):
 
 def node_web_search(state, web_tool):
     question = state["messages"][-1].content
+
     result = web_tool.invoke({"query": question})
 
     state["contexto_juridico_bruto"] = result.get("answer", "")
@@ -64,21 +57,18 @@ def node_generate_final(state, llm):
 Você é um consultor tributário sênior.
 
 Regra:
-- Use SOMENTE o contexto RAG.
-- Se vazio: diga que não encontrou fundamentos no corpus atual.
-- Não invente leis.
-- Relacione ao perfil do cliente.
+- Use SOMENTE o contexto do RAG.
+- Se vazio, informe que não encontrou base jurídica.
+- Nunca invente leis.
+- Relacione com o perfil do cliente.
 """
 
     resposta = llm.invoke([
         SystemMessage(content=prompt),
-        HumanMessage(content=f"PERFIL: {perfil}\n\nCONTEXTO:\n{contexto}\n\nFONTES:\n{fontes}\n\nPergunta:{question}")
+        HumanMessage(
+            content=f"PERFIL:\n{perfil}\n\nCONTEXTO RAG:\n{contexto}\n\nFONTES:\n{fontes}"
+        )
     ])
 
     state["messages"].append(AIMessage(content=resposta.content))
     return state
-
-
-def node_router(state):
-    from graph.router import node_router as router
-    return router(state)
