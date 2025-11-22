@@ -18,10 +18,9 @@ class RetrieverWrapper:
 
         vector = self.embeddings.embed_query(enriched)
 
-        results = self.client.query_points(
+        results = self.client.search(
             collection_name=self.collection,
-            query=vector,
-            vector_name="default",
+            query_vector=("default", vector),
             limit=6,
             search_params=SearchParams(hnsw_ef=128)
         )
