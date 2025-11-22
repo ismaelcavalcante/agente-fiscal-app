@@ -1,38 +1,70 @@
-import json
+from qdrant_client import QdrantClient
 from langchain_qdrant import Qdrant
 from langchain_openai import OpenAIEmbeddings
-from qdrant_client import QdrantClient
 from utils.logs import logger
 
 
-def build_retriever(qdrant_url, qdrant_api_key, collection_name, embedding_model_name, openai_api_key):
+TRIBUTARY_EXPANSION = [
+    "IBS", "CBS", "IS", "EC 132", "LC 214",
+    "tributação", "crédito", "não cumulatividade",
+    "obrigação acessória", "regime fiscal"
+]
 
-    logger.info("Iniciando retriever Qdrant...")
+
+def expand_query(query: str, client_profile: str) -> str:
+    """
+    Aumenta recall no Qdrant.
+    """
+    return (
+        f"{query}\n\n"
+        f"Perfil do cliente: {client_profile}\n"
+        f"Palavras-chave: {', '.join(TRIBUTARY_EXPANSION)}"
+    )
+
+
+def load_qdrant_client(url: str, api_key: str) -> QdrantClient:
+    try:
+        client = QdrantClient(url=url, api_key=api_key)
+        logger.info("QdrantClient conectado com sucesso.")
+        return client
+    except Exception as e:
+        logger.error(f"Erro ao conectar Qdrant: {e}")
+        raise
+
+
+def build_retriever(
+    qdrant_url: str,
+    qdrant_api_key: str,
+    collection_name: str,
+    embedding_model_name: str,
+    openai_api_key: str
+):
+    logger.info("Inicializando retriever Qdrant...")
 
     embeddings = OpenAIEmbeddings(
-        model=embedding_model_name,
-        openai_api_key=openai_api_key
+        api_key=openai_api_key,
+        model=embedding_model_name
     )
 
-    client = QdrantClient(
-        url=qdrant_url,
-        api_key=qdrant_api_key
-    )
+    client = load_qdrant_client(qdrant_url, qdrant_api_key)
 
     store = Qdrant(
         client=client,
         collection_name=collection_name,
         embeddings=embeddings,
-        vector_name="default"   # 🔥 obrigatório
+        vector_name="default"
     )
 
     retriever = store.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": 5}   # número de chunks
+        search_type="mmr",
+        search_kwargs={
+            "k": 6,
+            "fetch_k": 25,
+            "lambda_mult": 0.4
+        }
     )
 
     logger.info("Retriever Qdrant carregado com sucesso.")
-
     return RetrieverWrapper(retriever)
 
 
@@ -41,13 +73,34 @@ class RetrieverWrapper:
     def __init__(self, retriever):
         self.retriever = retriever
 
-    def retrieve_documents(self, query):
-        docs = self.retriever.invoke(query)
+    def retrieve_documents(self, query, client_profile=""):
+        enriched = expand_query(query, client_profile)
 
-        # --- extrair texto (page_content) ---
-        contexto_concat = "\n\n".join([d.page_content for d in docs])
+        try:
+            # 🔥 AGORA SIM — CHAMA O RETRIEVER DE VERDADE
+            docs = self.retriever.invoke(enriched)
 
-        # --- extrair metadados ---
-        metadata_list = [dict(d.metadata) for d in docs]
+            # --- metadados ---
+            metadata_list = [
+                {
+                    "source": d.metadata.get("source", "QDRANT"),
+                    "page": d.metadata.get("page", None),
+                    "document_type": d.metadata.get("document_type", "LEI"),
+                }
+                for d in docs
+            ]
 
-        return metadata_list, contexto_concat
+            # --- contexto textual completo ---
+            contexto = "\n\n".join(
+                [
+                    f"[{d.metadata.get('document_type', 'Lei')} | pg {d.metadata.get('page', '?')}] "
+                    f"{d.page_content}"
+                    for d in docs
+                ]
+            )
+
+            return metadata_list, contexto
+
+        except Exception as e:
+            logger.error(f"Erro durante busca no Qdrant: {e}")
+            return [], ""
