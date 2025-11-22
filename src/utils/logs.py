@@ -23,4 +23,16 @@ def get_logger(name: str) -> logging.Logger:
 
 
 # Global logger instance
-logger = get_logger("agente_fiscal")
+logger = logging.getLogger("agente_fiscal")
+logger.setLevel(logging.DEBUG)
+
+handler = logging.StreamHandler()
+handler.setLevel(logging.DEBUG)
+
+formatter = logging.Formatter("[%(levelname)s] %(name)s: %(message)s")
+handler.setFormatter(formatter)
+
+logger.addHandler(handler)
+
+def log_state(state, title="STATE"):
+    logger.debug(f"🔎 {title}: {state}")
