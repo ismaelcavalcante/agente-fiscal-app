@@ -3,6 +3,7 @@ from qdrant_client.models import SearchParams
 from langchain_openai import OpenAIEmbeddings
 from utils.logs import logger
 
+
 class RetrieverWrapper:
 
     def __init__(self, client, embeddings, collection):
@@ -11,6 +12,7 @@ class RetrieverWrapper:
         self.collection = collection
 
     def retrieve_documents(self, query, perfil):
+
         enriched = f"{query}\n\nPerfil:{perfil}"
 
         logger.error("=== DEBUG RAG (manual) ===")
@@ -19,31 +21,31 @@ class RetrieverWrapper:
         vector = self.embeddings.embed_query(enriched)
 
         try:
-            results = self.client.search_points(
+            results = self.client.query_points(
                 collection_name=self.collection,
-                vector=vector,
-                vector_name="default",   # ← sua collection usa vetores nomeados
-                limit=6
+                query=vector,
+                vector_name="default",     # ← sua collection usa nome default
+                limit=6,
+                search_params=SearchParams(hnsw_ef=128)
             )
+
         except Exception as e:
-            logger.error(f"[RAG_QDRANT] Erro no search_points: {e}")
-            raise e
+            logger.error(f"[RAG_QDRANT] Erro: {e}")
+            raise
 
         docs = results.points
-
         logger.error(f"Docs retornados: {len(docs)}")
 
         metadata = []
         contexto = []
 
-        for i, point in enumerate(docs):
-            payload = point.payload or {}
-            texto = payload.get("page_content", "")
-
-            logger.error(f"[DOC {i}] {texto[:200]}")
+        for i, p in enumerate(docs):
+            payload = p.payload or {}
+            text = payload.get("page_content", "")
+            logger.error(f"[DOC {i}] {text[:200]}")
 
             metadata.append(payload)
-            contexto.append(texto)
+            contexto.append(text)
 
         return metadata, "\n\n".join(contexto)
 
