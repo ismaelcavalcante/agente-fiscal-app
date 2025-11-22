@@ -1,6 +1,8 @@
 import streamlit as st
 from openai import OpenAI
 from qdrant_client import QdrantClient, models
+from typing import Union 
+from langchain_core.messages import BaseMessage
 import os
 from typing import TypedDict, Annotated, List, Dict, Any
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
