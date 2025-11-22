@@ -13,6 +13,9 @@ from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 # REMOVIDO: from langfuse import Langfuse
 # REMOVIDO: from langfuse.callback import CallbackHandler as LangfuseCallbackHandler
 from protocol import ConsultaContext, FonteDocumento
+from typing import TypedDict, Annotated, List, Dict, Any, Union # <-- Certifique-se que 'Union' está aqui
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage # <-- Certifique-se que 'BaseMessage' está aqui
+
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA E INICIALIZAÇÃO DE ESTADO ---
 st.set_page_config(
@@ -44,6 +47,18 @@ class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], lambda x, y: x + y]
     perfil_cliente: str
     sources_data: List[Dict[str, Any]]
+
+
+# --- FUNÇÃO UTILITY: TRADUZ O TIPO DA MENSAGEM (CORREÇÃO) ---
+
+def get_streamlit_role(message: Union[dict, BaseMessage]) -> str:
+    """Converte o objeto LangChain/LangGraph de volta para um role do Streamlit."""
+    if isinstance(message, dict):
+        # Para mensagens antigas ou as que colocamos como dict (com "role")
+        return message["role"].replace('user', 'human')
+    # Se for um objeto BaseMessage, usamos o atributo .type e corrigimos 'human' para 'user'
+    return message.type.replace('human', 'user') 
+# -------------------------------------------------------------
 
 # --- 3. CARREGAR OS SERVIÇOS (CACHED) E CONSTRUIR O GRAFO ---
 
