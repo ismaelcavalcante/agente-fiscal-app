@@ -14,14 +14,18 @@ from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langfuse import Langfuse
 from langfuse.callback import CallbackHandler as LangfuseCallbackHandler
-from protocol import ConsultaContext, FonteDocumento
+from protocol import ConsultaContext, FonteDocumento # Assumindo que 'protocol' está definido
 
 # --- FUNÇÃO UTILITY: TRADUZ O TIPO DA MENSAGEM ---
 def get_streamlit_role(message: Union[dict, BaseMessage]) -> str:
     """Converte o objeto LangChain/LangGraph de volta para um role do Streamlit."""
     if isinstance(message, dict):
-        return message["role"].replace('user', 'human') # Retorna o role do dicionário
-    # Se for um objeto BaseMessage, quebramos o atributo .type e corrigimos 'human' para 'user'
+        # Para mensagens salvas como Dicionário (Formato Streamlit)
+        # Substitui 'human' por 'user' (padrão Streamlit)
+        return message["role"].replace('human', 'user') 
+    
+    # Se for um objeto BaseMessage, usamos o atributo .type
+    # Substitui 'human' por 'user' (padrão Streamlit)
     return message.type.replace('human', 'user') 
 # ------------------------------------------------
 
@@ -34,6 +38,7 @@ st.set_page_config(
 
 # Inicialização de variáveis de sessão
 if "messages" not in st.session_state:
+    # O histórico deve começar limpo. Armazenamos como DICT para fácil serialização do Streamlit.
     st.session_state.messages = []
 if "client_profile" not in st.session_state:
     st.session_state.client_profile = """{
@@ -88,10 +93,10 @@ def carregar_servicos_e_grafo():
             models.FieldCondition(key="metadata.regime_tax", match=models.MatchText(text="Geral/Presumido")),
         ])
         
-        # --- CORREÇÃO DO ERRO 'search' (Definição da Ferramenta) ---
+        # --- Definição da Ferramenta de Biblioteca ---
         retriever_biblioteca_obj = qdrant_store.as_retriever(search_kwargs={"k": 7, "filter": qdrant_filter})
         
-        # Transformar o Retriever em uma Tool (O FIX)
+        # Transformar o Retriever em uma Tool
         biblioteca_tool = create_retriever_tool(
             retriever_biblioteca_obj,
             "biblioteca_fiscal",
@@ -114,14 +119,18 @@ def carregar_servicos_e_grafo():
             # O Roteador agora usa a lista "tools"
             tool_router_llm = llm.bind_tools(tools)
             
-            response = tool_router_llm.invoke(f"Perfil do Cliente: {state['perfil_cliente']}\n\nPergunta: {last_message.content}")
+            # Garante que a última mensagem é a HumanMessage do usuário.
+            # Se for uma BaseMessage, usamos .content.
+            content = last_message.content
+            
+            response = tool_router_llm.invoke(f"Perfil do Cliente: {state['perfil_cliente']}\n\nPergunta: {content}")
             
             if not response.tool_calls:
                 return "gerar_resposta_sem_contexto"
             tool_name = response.tool_calls[0]["name"]
             
             # Aqui comparamos o nome da função escolhida pelo LLM
-            if tool_name == "TavilySearchResults":
+            if tool_name == "tavily_search_results": # Nome padrão da TavilySearchResults tool
                 return "usar_busca_web"
             elif tool_name == "biblioteca_fiscal":
                 return "usar_biblioteca_fiscal"
@@ -142,6 +151,7 @@ def carregar_servicos_e_grafo():
             # Prepara os metadados para o MCP
             metadados = [{"source": doc.metadata.get('document_type', 'Lei'), "page": doc.metadata.get('page'), "type": doc.metadata.get('document_type')} for doc in docs]
             
+            # Retorna uma AIMessage com o contexto para a próxima etapa
             msg = AIMessage(content=f"Contexto Biblioteca: {contexto_text}")
             return {"messages": [msg], "sources_data": metadados}
 
@@ -150,6 +160,7 @@ def carregar_servicos_e_grafo():
             docs = web_search_tool.invoke(pergunta)
             contexto_text = "\n---\n".join([str(doc) for doc in docs])
             metadados = [{"source": "Tavily Web Search", "page": None, "type": "WEB", "content": doc['content']} for doc in docs]
+            # Retorna uma AIMessage com o contexto para a próxima etapa
             msg = AIMessage(content=f"Contexto da Web (Notícias): {contexto_text}")
             return {"messages": [msg], "sources_data": metadados}
 
@@ -157,9 +168,13 @@ def carregar_servicos_e_grafo():
             messages = state["messages"]
             perfil = state["perfil_cliente"]
             
+            # Encontra a mensagem de contexto mais recente (que é uma AIMessage)
             contexto_msg = next((msg for msg in reversed(messages) if isinstance(msg, AIMessage) and ('Contexto' in msg.content)), None)
             contexto_juridico_bruto = contexto_msg.content if contexto_msg else "Nenhuma fonte relevante encontrada."
             
+            # Pega a última HumanMessage original do usuário
+            pergunta_cliente_msg = next((msg.content for msg in reversed(messages) if isinstance(msg, HumanMessage)), "Pergunta não encontrada.")
+
             # Formatar Fontes Detalhadas (para o MCP)
             fontes_detalhadas = []
             for i, fonte in enumerate(state.get("sources_data", [])):
@@ -176,7 +191,7 @@ def carregar_servicos_e_grafo():
             # CONSTRUIR E VALIDAR O PROTOCOLO (MCP)
             try:
                 context_protocol = ConsultaContext(
-                    trace_id=st.session_state.thread_id, perfil_cliente=perfil, pergunta_cliente=messages[-1].content,
+                    trace_id=st.session_state.thread_id, perfil_cliente=perfil, pergunta_cliente=pergunta_cliente_msg,
                     contexto_juridico_bruto=contexto_juridico_bruto, fontes_detalhadas=fontes_detalhadas,
                     prompt_mestre="O Agente Fiscal Advisor, especialista em reforma tributária."
                 )
@@ -191,7 +206,15 @@ def carregar_servicos_e_grafo():
                 **Contexto Jurídico Validado:** {context_protocol.contexto_juridico_bruto}
                 """
             )
-            response = llm.invoke(messages + [prompt_mestre_msg])
+            
+            # As mensagens para o LLM agora incluem o histórico do usuário E o prompt mestre
+            # O estado LangGraph acumula todas as HumanMessage e AIMessage de contexto.
+            # Vamos limpar as mensagens para enviar apenas a última HumanMessage original + o novo prompt mestre
+            
+            # Encontra a última HumanMessage original do usuário
+            ultima_mensagem_usuario = HumanMessage(content=pergunta_cliente_msg)
+            
+            response = llm.invoke([ultima_mensagem_usuario, prompt_mestre_msg])
             
             return {"messages": [AIMessage(content=response.content)], "mcp_data": context_protocol.model_dump_json()}
 
@@ -280,15 +303,15 @@ if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
         with st.chat_message("assistant"):
             with st.spinner("O Agente está pensando..."):
                 
-                # --- 1. CRIAÇÃO DA LISTA DE MENSAGENS LIMPA (A CORREÇÃO FINAL) ---
+                # --- CRIAÇÃO DA LISTA DE MENSAGENS LIMPA (Conversão para BaseMessage) ---
                 mensagens_para_grafo = []
                 for msg in st.session_state.messages:
-                    # Determinamos se é Human ou AI, independentemente do formato (dict ou BaseMessage)
-                    if isinstance(msg, BaseMessage) or msg.get('role') == 'assistant':
-                        content = getattr(msg, 'content', msg.get('content', ''))
+                    content = getattr(msg, 'content', msg.get('content', ''))
+                    role = getattr(msg, 'role', msg.get('role', 'user')) # assume 'user' se não definido
+                    
+                    if role in ['assistant', 'ai']:
                         mensagens_para_grafo.append(AIMessage(content=content))
-                    else: # Se não for assistente, é o input do usuário
-                        content = msg.get('content', '')
+                    else: # user ou human
                         mensagens_para_grafo.append(HumanMessage(content=content))
                 
                 # -------------------------------------------------------------
@@ -315,16 +338,29 @@ if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
                 
                 try:
                     resposta_final = ""
+                    mcp_output = None
+                    
+                    # Loop de streaming do LangGraph
                     for event in agente.stream(inputs, config, stream_mode="values"):
-                        new_message = event["messages"][-1]
-                        if new_message.role == "assistant":
+                        new_message = event.get("messages", [None])[-1]
+                        
+                        # --- CORREÇÃO AQUI: USANDO .type AO INVÉS DE .role ---
+                        if new_message and new_message.type == "ai":
                             resposta_final = new_message.content
+                        
+                        # Capturar o MCP (se disponível no evento final)
+                        if "mcp_data" in event:
+                             mcp_output = event["mcp_data"]
 
                     st.markdown(resposta_final)
                     
                     # 2. Salva a resposta no histórico no formato seguro de DICT
                     st.session_state.messages.append({"role": "assistant", "content": resposta_final})
-                
+                    
+                    # Opcional: Mostrar o MCP na interface (para debug ou transparência)
+                    # if mcp_output:
+                    #     st.json({"MCP Protocol": mcp_output})
+
                 except Exception as e:
                     st.error(f"Erro ao executar o agente: {e}")
                     print(f"Erro na execução do grafo: {e}")
