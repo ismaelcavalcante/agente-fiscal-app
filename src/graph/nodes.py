@@ -1,8 +1,7 @@
 import traceback
-from langchain.schema import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from utils.logs import logger
 from protocol import ConsultaContext, FonteDocumento
-
 
 # ===============================
 # 🔐 Segurança: valida estado
