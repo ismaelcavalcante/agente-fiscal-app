@@ -1,10 +1,3 @@
-import os
-
-print("=== ÁRVORE DE DIRETÓRIOS ===")
-for root, dirs, files in os.walk("/mount/src/agente-fiscal-app", topdown=True):
-    print(root, dirs, files)
-print("=============================")
-
 import streamlit as st
 from langchain_openai import ChatOpenAI
 from langfuse import Langfuse
