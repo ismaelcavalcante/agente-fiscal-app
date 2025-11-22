@@ -146,9 +146,12 @@ obrigações acessórias e distribuição da receita.
 def node_generate_final(state: dict, llm):
     logger.debug("📌 [node_generate_final] Gerando resposta final...")
 
+    # ----------------------
+    # Validar mensagens
+    # ----------------------
     try:
         msgs = require_messages(state)
-        question = msgs[-1].content
+        pergunta = msgs[-1].content
     except Exception as e:
         logger.error(f"generate_final → state inválido: {e}")
         return {
@@ -156,25 +159,51 @@ def node_generate_final(state: dict, llm):
             "mcp": None
         }
 
-    perfil = state.get("perfil_cliente", "Perfil não informado")
+    # ----------------------
+    # Dados complementares
+    # ----------------------
+    perfil = state.get("perfil_cliente", "{}")
     contexto = state.get("contexto_juridico_bruto", "")
-    sources_list = state.get("sources_data", [])
+    fontes = state.get("sources_data", [])
 
-    prompt_sistema = f"""
-Você é um consultor tributário sênior.
-Use o contexto jurídico somente quando útil.
+    # ----------------------
+    # SYSTEM PROMPT FORTALECIDO
+    # ----------------------
+    system_prompt = f"""
+Você é um CONSULTOR TRIBUTÁRIO SÊNIOR especializado na EC 132/2023 (IVA Dual),
+no IBS municipal/estadual, CBS federal e regimes de transição.
 
-PERFIL DO CLIENTE:
+SEMPRE responda:
+- usando o PERFIL do contribuinte (JSON abaixo)
+- usando o CONTEXTO jurídico do RAG
+- citando eventuais condicionantes
+- mostrando claramente se há ou não DIREITO AO CRÉDITO DE IBS
+- sempre contextualizando conforme a ATIVIDADE ECONÔMICA real da empresa
+
+PERFIL DO CONTRIBUINTE (IMPORTANTE):
 {perfil}
 
-CONTEXTO:
+CONTEXTO JURÍDICO DISPONÍVEL:
 {contexto}
+
+REGRAS PARA CRÉDITO IBS:
+1. O fato gerador deve ser operação tributada.
+2. O item comprado deve gerar crédito conforme EC 132.
+3. A atividade econômica define o direito.
+4. Compras para uso e consumo imediato normalmente geram crédito.
+5. Serviços tomados para execução da atividade geram crédito.
+6. Atividades isentas, imunes ou não tributadas NÃO geram crédito.
+7. Obras de construção civil têm regras específicas.
+8. Se o perfil for Simples Nacional: IBS NÃO É RECOLHIDO → NÃO GERA CRÉDITO.
 """
 
+    # ----------------------
+    # Gerar resposta
+    # ----------------------
     try:
-        response = llm.invoke([
-            SystemMessage(content=prompt_sistema),
-            HumanMessage(content=question)
+        resposta = llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=pergunta)
         ])
     except Exception as e:
         logger.error(f"Erro no LLM final: {e}")
@@ -183,8 +212,11 @@ CONTEXTO:
             "mcp": None
         }
 
+    # ----------------------
+    # Construir MCP
+    # ----------------------
     fontes_mcp = []
-    for i, f in enumerate(sources_list):
+    for i, f in enumerate(fontes):
         fontes_mcp.append(
             FonteDocumento(
                 document_source=str(f.get("source", "DESCONHECIDO")),
@@ -197,13 +229,13 @@ CONTEXTO:
     mcp = ConsultaContext(
         trace_id=state.get("thread_id"),
         perfil_cliente=perfil,
-        pergunta_cliente=question,
+        pergunta_cliente=pergunta,
         contexto_juridico_bruto=contexto,
         fontes_detalhadas=fontes_mcp,
-        prompt_mestre=prompt_sistema
+        prompt_mestre=system_prompt
     )
 
     return {
-        "messages": [AIMessage(content=response.content)],
+        "messages": [AIMessage(content=resposta.content)],
         "mcp": mcp
     }
