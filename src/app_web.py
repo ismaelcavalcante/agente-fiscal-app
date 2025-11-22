@@ -20,8 +20,8 @@ from protocol import ConsultaContext, FonteDocumento
 def get_streamlit_role(message: Union[dict, BaseMessage]) -> str:
     """Converte o objeto LangChain/LangGraph de volta para um role do Streamlit."""
     if isinstance(message, dict):
-        return message["role"]
-    # Se for um objeto (BaseMessage), usamos o atributo .type e corrigimos 'human' para 'user'
+        return message["role"].replace('user', 'human') # Retorna o role do dicionário
+    # Se for um objeto BaseMessage, quebramos o atributo .type e corrigimos 'human' para 'user'
     return message.type.replace('human', 'user') 
 # ------------------------------------------------
 
@@ -269,50 +269,53 @@ for message in st.session_state.messages:
         st.markdown(content)
 
 # Recebe a nova pergunta do usuário
+# Recebe a nova pergunta do usuário
 if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
     
+    # 1. Adiciona a mensagem do usuário ao histórico (Formato seguro de DICT)
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    if agente and langfuse:
+    if agente:
         with st.chat_message("assistant"):
             with st.spinner("O Agente está pensando... (Rastreando com Langfuse)..."):
                 
-                # --- CORREÇÃO DA FALHA 'get_langchain_callback' ---
-                # Criamos o callback handler explicitamente usando a classe importada,
-                # para contornar o objeto langfuse.get_langchain_callback() que está quebrando.
-                try:
-                    langfuse_callbacks = [LangfuseCallbackHandler(
-                        public_key=st.secrets["LANGFUSE_PUBLIC_KEY"],
-                        secret_key=st.secrets["LANGFUSE_SECRET_KEY"],
-                        host=st.secrets.get("LANGFUSE_BASE_URL", "https://cloud.langfuse.com"),
+                # --- PREPARAÇÃO DOS INPUTS PARA O LANGGRAPH ---
+                # Criamos a lista de BaseMessages (o que o LangGraph exige)
+                mensagens_para_grafo = [
+                    HumanMessage(content=msg['content']) if msg['role'] == 'user' else AIMessage(content=msg['content'])
+                    for msg in st.session_state.messages
+                ]
+
+                # Prepara os Callbacks do Langfuse (mantido do código anterior)
+                langfuse_callbacks = [] 
+                if langfuse:
+                    langfuse_callbacks = [langfuse.get_langchain_callback(
                         user_id="usuario_streamlit",
                         session_id=st.session_state.thread_id
                     )]
-                except Exception as e:
-                    # Se falhar aqui, o problema é na chave ou na URL, mas o Agente continua sem monitoramento.
-                    print(f"AVISO: Langfuse callback falhou na inicialização. Erro: {e}")
-                    langfuse_callbacks = []
-                # ----------------------------------------------------
                 
                 config = {
                     "configurable": {"thread_id": st.session_state.thread_id},
                     "callbacks": langfuse_callbacks
                 }
                 inputs = {
-                    "messages": [HumanMessage(content=prompt)],
+                    "messages": mensagens_para_grafo, # <--- INPUT CORRIGIDO
                     "perfil_cliente": st.session_state.client_profile
                 }
                 
                 try:
                     resposta_final = ""
+                    # Execução do Grafo
                     for event in agente.stream(inputs, config, stream_mode="values"):
                         new_message = event["messages"][-1]
                         if new_message.role == "assistant":
                             resposta_final = new_message.content
 
                     st.markdown(resposta_final)
+                    
+                    # 2. Salva a resposta no histórico no formato seguro de DICT
                     st.session_state.messages.append({"role": "assistant", "content": resposta_final})
                 
                 except Exception as e:
