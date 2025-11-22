@@ -1,126 +1,53 @@
-from qdrant_client import QdrantClient
+import json
 from langchain_qdrant import Qdrant
 from langchain_openai import OpenAIEmbeddings
+from qdrant_client import QdrantClient
 from utils.logs import logger
 
 
-# Palavras-chave tributárias úteis para reforçar a busca
-TRIBUTARY_EXPANSION = [
-    "reforma tributária",
-    "IBS",
-    "CBS",
-    "LC 214",
-    "EC 132",
-    "tributação",
-    "alíquota",
-    "isenção",
-    "substituição tributária",
-    "benefício fiscal",
-    "regra fiscal",
-    "imposto"
-]
+def build_retriever(qdrant_url, qdrant_api_key, collection_name, embedding_model_name, openai_api_key):
 
+    logger.info("Iniciando retriever Qdrant...")
 
-def expand_query(query: str, client_profile: str) -> str:
-    """
-    Enriquecimento da consulta antes de enviar para o retriever.
-    Aumenta recall no Qdrant (essencial para linguagem jurídica).
-    """
-    enriched = (
-        f"{query}\n\n"
-        f"Contexto do cliente: {client_profile}\n"
-        f"Palavras-chave relacionadas: {', '.join(TRIBUTARY_EXPANSION)}"
-    )
-    return enriched
-
-
-def load_qdrant_client(url: str, api_key: str) -> QdrantClient:
-    """
-    Carrega o cliente Qdrant com logs seguros.
-    """
-    try:
-        client = QdrantClient(url=url, api_key=api_key)
-        logger.info("QdrantClient conectado com sucesso.")
-        return client
-    except Exception as e:
-        logger.error(f"Erro ao conectar Qdrant: {e}")
-        raise
-
-
-def build_retriever(
-    qdrant_url: str,
-    qdrant_api_key: str,
-    collection_name: str,
-    embedding_model_name: str,
-    openai_api_key: str
-):
-    """
-    Cria o retriever do Qdrant com MMR otimizado.
-    """
-    logger.info("Inicializando retriever Qdrant...")
-
-    # Embeddings
     embeddings = OpenAIEmbeddings(
-        api_key=openai_api_key,
-        model=embedding_model_name
+        model=embedding_model_name,
+        openai_api_key=openai_api_key
     )
 
-    # Cliente
-    client = load_qdrant_client(qdrant_url, qdrant_api_key)
+    client = QdrantClient(
+        url=qdrant_url,
+        api_key=qdrant_api_key
+    )
 
-    # Store
     store = Qdrant(
         client=client,
         collection_name=collection_name,
         embeddings=embeddings,
+        vector_name="default"   # 🔥 obrigatório
     )
 
-    # Retriever MMR
     retriever = store.as_retriever(
-        search_type="mmr",
-        search_kwargs={
-            "k": 6,
-            "fetch_k": 30,
-            "lambda_mult": 0.35
-        }
+        search_type="similarity",
+        search_kwargs={"k": 5}   # número de chunks
     )
 
     logger.info("Retriever Qdrant carregado com sucesso.")
-    return retriever
+
+    return RetrieverWrapper(retriever)
 
 
-def retrieve_documents(retriever, query: str, client_profile: str) -> tuple[list, str]:
-    """
-    Executa busca no Qdrant com enriquecimento.
-    Retorna:
-        - lista de documentos
-        - contexto concatenado para o LLM
-    """
+class RetrieverWrapper:
 
-    enriched_query = expand_query(query, client_profile)
+    def __init__(self, retriever):
+        self.retriever = retriever
 
-    try:
-        docs_metadata = []
-        for i, d in enumerate(docs_metadata):
-            docs_metadata.append({
-                "source": d.metadata.get("source", "QDRANT"),
-                "page": d.metadata.get("page", None),
-                "document_type": d.metadata.get("document_type", "LEI"),
-                "chunk_index": i
-            })
+    def retrieve_documents(self, query):
+        docs = self.retriever.invoke(query)
 
-        # construir contexto legível
-        contexto = "\n\n".join(
-            [
-                f"[Fonte: {d.metadata.get('document_type', 'Lei')} | "
-                f"Página: {d.metadata.get('page', '?')}] — "
-                f"{d.page_content}"
-                for d in docs
-            ]
-        )
+        # --- extrair texto (page_content) ---
+        contexto_concat = "\n\n".join([d.page_content for d in docs])
 
-        return docs_metadata, contexto
+        # --- extrair metadados ---
+        metadata_list = [dict(d.metadata) for d in docs]
 
-    except Exception as e:
-        logger.error(f"Erro durante busca no Qdrant: {e}")
-        return [], ""
+        return metadata_list, contexto_concat
