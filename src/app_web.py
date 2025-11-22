@@ -62,8 +62,8 @@ class AgentState(TypedDict):
     perfil_cliente: str
     sources_data: List[Dict[str, Any]]
     thread_id: str
-    # CORREÇÃO 1: Adicionar campo de estado explícito para o contexto
     contexto_juridico_bruto: str 
+    mcp_data: str
 
 # --- 3. CARREGAR OS SERVIÇOS (CACHED) E CONSTRUIR O GRAFO ---
 
@@ -145,26 +145,25 @@ def carregar_servicos_e_grafo():
             perfil = state["perfil_cliente"]
             query = f"Perfil: {perfil}\nPergunta: {pergunta}"
             
-            # Correção para o erro 'NoneType' object is not iterable
             try:
-                docs = biblioteca_tool.invoke(query) 
+                # CORREÇÃO: Usar o retriever direto, não a tool (que retorna string)
+                docs = retriever_biblioteca_obj.invoke(query)
                 if docs is None:
                     docs = []
             except Exception as e:
-                print(f"Erro ao invocar biblioteca_tool: {e}")
+                print(f"Erro ao invocar retriever: {e}")
                 docs = []
             
             contexto_text = "\n---\n".join([doc.page_content for doc in docs])
             
             metadados = [{"source": doc.metadata.get('document_type', 'Lei'), "page": doc.metadata.get('page'), "type": doc.metadata.get('document_type')} for doc in docs]
             
-            # CORREÇÃO FINAL 6: Retornar o histórico de mensagens EXISTENTE (state["messages"])
-            return {"messages": state["messages"], "sources_data": metadados, "contexto_juridico_bruto": contexto_text}
+            # CORREÇÃO: NÃO retornar "messages" aqui para evitar duplicação (x + y)
+            return {"sources_data": metadados, "contexto_juridico_bruto": contexto_text}
 
         def no_busca_web(state: AgentState):
             pergunta = state["messages"][-1].content
             
-            # Correção para o erro 'NoneType' object is not iterable
             try:
                 docs = web_search_tool.invoke(pergunta)
                 if docs is None:
@@ -173,11 +172,11 @@ def carregar_servicos_e_grafo():
                 print(f"Erro ao invocar web_search_tool: {e}")
                 docs = []
                 
-            contexto_text = "\n---\n".join([str(doc) for doc in docs])
+            contexto_text = "\n---\n".join([doc.get('content', '') for doc in docs])
             metadados = [{"source": "Tavily Web Search", "page": None, "type": "WEB", "content": doc.get('content')} for doc in docs]
             
-            # CORREÇÃO FINAL 7: Retornar o histórico de mensagens EXISTENTE (state["messages"])
-            return {"messages": state["messages"], "sources_data": metadados, "contexto_juridico_bruto": contexto_text}
+            # CORREÇÃO: NÃO retornar "messages" aqui
+            return {"sources_data": metadados, "contexto_juridico_bruto": contexto_text}
 
         def no_gerador_resposta(state: AgentState):
             messages = state["messages"]
@@ -369,8 +368,9 @@ if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
                         "messages": mensagens_para_grafo, 
                         "perfil_cliente": st.session_state.client_profile,
                         "thread_id": st.session_state.thread_id,
-                        # Inicializa o novo campo de estado, será populado pelo nó de busca se acionado.
-                        "contexto_juridico_bruto": "" 
+                        "contexto_juridico_bruto": "",
+                        "sources_data": [], # <--- CORREÇÃO CRÍTICA: Inicializar lista vazia
+                        "mcp_data": ""      # Inicializar campo opcional
                     }
                 
                 try:
