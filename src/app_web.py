@@ -98,8 +98,8 @@ web_tool = build_web_tool(st.secrets["TAVILY_API_KEY"])
 #  Langfuse Tracking
 # ===============================
 langfuse = Langfuse(
-    public_key=st.secrets["LANGFUSE_PUBLIC"],
-    secret_key=st.secrets["LANGFUSE_SECRET"]
+    public_key=st.secrets["LANGFUSE_PUBLIC_KEY"],
+    secret_key=st.secrets["LANGFUSE_SECRET_KEY"]
 )
 
 
