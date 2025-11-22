@@ -62,6 +62,8 @@ class AgentState(TypedDict):
     perfil_cliente: str
     sources_data: List[Dict[str, Any]]
     thread_id: str
+    # CORREÇÃO 1: Adicionar campo de estado explícito para o contexto
+    contexto_juridico_bruto: str 
 
 # --- 3. CARREGAR OS SERVIÇOS (CACHED) E CONSTRUIR O GRAFO ---
 
@@ -155,9 +157,10 @@ def carregar_servicos_e_grafo():
             
             metadados = [{"source": doc.metadata.get('document_type', 'Lei'), "page": doc.metadata.get('page'), "type": doc.metadata.get('document_type')} for doc in docs]
             
-            msg = AIMessage(content=f"Contexto Biblioteca: {contexto_text}")
-            # Garante que o retorno é um dicionário de estado válido
-            return {"messages": [msg], "sources_data": metadados}
+            # msg = AIMessage(content=f"Contexto Biblioteca: {contexto_text}") # <-- REMOVIDO
+            
+            # CORREÇÃO 2: Retorna o contexto bruto no campo de estado
+            return {"sources_data": metadados, "contexto_juridico_bruto": contexto_text}
 
         def no_busca_web(state: AgentState):
             pergunta = state["messages"][-1].content
@@ -174,19 +177,21 @@ def carregar_servicos_e_grafo():
             contexto_text = "\n---\n".join([str(doc) for doc in docs])
             metadados = [{"source": "Tavily Web Search", "page": None, "type": "WEB", "content": doc.get('content')} for doc in docs]
             
-            msg = AIMessage(content=f"Contexto da Web (Notícias): {contexto_text}")
-            # Garante que o retorno é um dicionário de estado válido
-            return {"messages": [msg], "sources_data": metadados}
+            # msg = AIMessage(content=f"Contexto da Web (Notícias): {contexto_text}") # <-- REMOVIDO
+            
+            # CORREÇÃO 3: Retorna o contexto bruto no campo de estado
+            return {"sources_data": metadados, "contexto_juridico_bruto": contexto_text}
 
         def no_gerador_resposta(state: AgentState):
             messages = state["messages"]
             perfil = state["perfil_cliente"]
             
-            contexto_msg = next((msg for msg in reversed(messages) if isinstance(msg, AIMessage) and ('Contexto' in msg.content)), None)
-            contexto_juridico_bruto = contexto_msg.content if contexto_msg else "Nenhuma fonte relevante encontrada."
+            # CORREÇÃO 4: Lê o contexto bruto diretamente do estado, ignorando a mensagem intermediária
+            contexto_juridico_bruto = state.get("contexto_juridico_bruto", "Nenhuma fonte relevante encontrada.")
             
             # Pega a última HumanMessage original do usuário
-            pergunta_cliente_msg = next((msg.content for msg in messages if isinstance(msg, HumanMessage)), "Pergunta não encontrada.")
+            # A pergunta mais recente é sempre a última HumanMessage da lista
+            pergunta_cliente_msg = messages[-1].content 
 
             # Formatar Fontes Detalhadas (para o MCP)
             fontes_detalhadas = []
@@ -231,7 +236,7 @@ def carregar_servicos_e_grafo():
                 content=f"""
                 {context_protocol.prompt_mestre}
                 Com base no contexto a seguir, responda à última pergunta do usuário.
-                **Contexto Jurídico Validado:** {context_protocol.contexto_juridico_bruto}
+                **Contexto Jurídico Validado:** {contexto_juridico_bruto}
                 """
             )
             
@@ -358,7 +363,9 @@ if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
                 inputs = {
                         "messages": mensagens_para_grafo, 
                         "perfil_cliente": st.session_state.client_profile,
-                        "thread_id": st.session_state.thread_id # <--- NOVO INPUT ADICIONADO
+                        "thread_id": st.session_state.thread_id,
+                        # Inicializa o novo campo de estado, será populado pelo nó de busca se acionado.
+                        "contexto_juridico_bruto": "" 
                     }
                 
                 try:
