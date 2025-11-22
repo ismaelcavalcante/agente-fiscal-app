@@ -129,6 +129,7 @@ if user_input:
     lc_messages = convert_history_to_lc(st.session_state.messages)
 
     try:
+        st.write("DEBUG MESSAGES STATE:", st.session_state.messages)
         result = app_graph.invoke(
             {
                 "messages": lc_messages,
