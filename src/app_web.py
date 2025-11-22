@@ -6,11 +6,12 @@ from typing import TypedDict, Annotated, List, Dict, Any
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import Qdrant
 from langchain_community.tools.tavily_search import TavilySearchResults
-from langchain.tools.retriever import create_retriever_tool # <--- NOVO IMPORT
+from langchain.tools.retriever import create_retriever_tool
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langfuse import Langfuse
+from langfuse.callback import CallbackHandler as LangfuseCallbackHandler
 from protocol import ConsultaContext, FonteDocumento
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA E INICIALIZAÇÃO DE ESTADO ---
@@ -264,13 +265,22 @@ if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
         with st.chat_message("assistant"):
             with st.spinner("O Agente está pensando... (Rastreando com Langfuse)..."):
                 
-                # Prepara os Callbacks do Langfuse
-                langfuse_callbacks = [] 
-                if langfuse:
-                    langfuse_callbacks = [langfuse.get_langchain_callback(
+                # --- CORREÇÃO DA FALHA 'get_langchain_callback' ---
+                # Criamos o callback handler explicitamente usando a classe importada,
+                # para contornar o objeto langfuse.get_langchain_callback() que está quebrando.
+                try:
+                    langfuse_callbacks = [LangfuseCallbackHandler(
+                        public_key=st.secrets["LANGFUSE_PUBLIC_KEY"],
+                        secret_key=st.secrets["LANGFUSE_SECRET_KEY"],
+                        host=st.secrets.get("LANGFUSE_BASE_URL", "https://cloud.langfuse.com"),
                         user_id="usuario_streamlit",
                         session_id=st.session_state.thread_id
                     )]
+                except Exception as e:
+                    # Se falhar aqui, o problema é na chave ou na URL, mas o Agente continua sem monitoramento.
+                    print(f"AVISO: Langfuse callback falhou na inicialização. Erro: {e}")
+                    langfuse_callbacks = []
+                # ----------------------------------------------------
                 
                 config = {
                     "configurable": {"thread_id": st.session_state.thread_id},
