@@ -1,5 +1,9 @@
-import pkg_resources
-print("=== VERSÃO QDRANT CLIENT ===", pkg_resources.get_distribution("qdrant-client").version)
+from importlib.metadata import version, PackageNotFoundError
+
+try:
+    print("=== VERSÃO QDRANT CLIENT ===", version("qdrant-client"))
+except PackageNotFoundError:
+    print("Qdrant client NÃO ESTÁ INSTALADO!")
 
 import streamlit as st
 from langchain_openai import ChatOpenAI
