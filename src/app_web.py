@@ -61,6 +61,7 @@ class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], lambda x, y: x + y]
     perfil_cliente: str
     sources_data: List[Dict[str, Any]]
+    thread_id: str
 
 # --- 3. CARREGAR OS SERVIÇOS (CACHED) E CONSTRUIR O GRAFO ---
 
@@ -209,12 +210,12 @@ def carregar_servicos_e_grafo():
 
             # CONSTRUIR E VALIDAR O PROTOCOLO (MCP)
             try:
-                # CORREÇÃO CRÍTICA: Uso de .get() com fallback seguro para thread_id
-                safe_thread_id = st.session_state.get("thread_id", "fallback_id_00") 
+                # CORREÇÃO: Lê o thread_id DIRETAMENTE do state (AgentState), não do st.session_state
+                current_thread_id = state["thread_id"]
                 
                 context_protocol = ConsultaContext(
-                    # Acessa com fallback, resolvendo o 'st.session_state has no attribute'
-                    trace_id=safe_thread_id, 
+                    # Usa o thread_id que veio no state
+                    trace_id=current_thread_id, 
                     perfil_cliente=perfil, 
                     pergunta_cliente=pergunta_cliente_msg,
                     contexto_juridico_bruto=contexto_juridico_bruto, 
@@ -350,14 +351,15 @@ if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
                         pass
                 
                 config = {
-                    # Garantimos que a thread_id está configurada
-                    "configurable": {"thread_id": st.session_state.get("thread_id", "fallback_id_00")},
-                    "callbacks": langfuse_callbacks
-                }
+                        # O LangGraph pode gerenciar a thread_id via checkpointer, mas mantemos aqui para compatibilidade
+                        "configurable": {"thread_id": st.session_state.get("thread_id", "fallback_id_00")},
+                        "callbacks": langfuse_callbacks
+                    }
                 inputs = {
-                    "messages": mensagens_para_grafo, 
-                    "perfil_cliente": st.session_state.client_profile
-                }
+                        "messages": mensagens_para_grafo, 
+                        "perfil_cliente": st.session_state.client_profile,
+                        "thread_id": st.session_state.thread_id # <--- NOVO INPUT ADICIONADO
+                    }
                 
                 try:
                     resposta_final = ""
