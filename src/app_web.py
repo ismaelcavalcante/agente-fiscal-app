@@ -21,11 +21,9 @@ def get_streamlit_role(message: Union[dict, BaseMessage]) -> str:
     """Converte o objeto LangChain/LangGraph de volta para um role do Streamlit."""
     if isinstance(message, dict):
         # Para mensagens salvas como Dicionário (Formato Streamlit)
-        # Substitui 'human' por 'user' (padrão Streamlit)
         return message["role"].replace('human', 'user') 
     
     # Se for um objeto BaseMessage, usamos o atributo .type
-    # Substitui 'human' por 'user' (padrão Streamlit)
     return message.type.replace('human', 'user') 
 # ------------------------------------------------
 
@@ -36,9 +34,8 @@ st.set_page_config(
     layout="wide"
 )
 
-# Inicialização de variáveis de sessão
+# Inicialização de variáveis de sessão (REFORÇADO)
 if "messages" not in st.session_state:
-    # O histórico deve começar limpo. Armazenamos como DICT para fácil serialização do Streamlit.
     st.session_state.messages = []
 if "client_profile" not in st.session_state:
     st.session_state.client_profile = """{
@@ -47,8 +44,12 @@ if "client_profile" not in st.session_state:
 "regime_tributario": "Simples Nacional",
 "faturamento_anual": "R$ 3.000.000,00"
 }"""
+# A chave "thread_id" é crucial para o erro; garantimos sua inicialização.
 if "thread_id" not in st.session_state:
     st.session_state.thread_id = "1" 
+if "db_count" not in st.session_state:
+    st.session_state.db_count = 0
+
 
 # --- Constantes de Serviço ---
 NOME_DA_COLECAO = "leis_fiscais_v1"
@@ -118,7 +119,6 @@ def carregar_servicos_e_grafo():
             
             tool_router_llm = llm.bind_tools(tools)
             
-            # Garante que a última mensagem é a HumanMessage do usuário.
             content = last_message.content
             
             response = tool_router_llm.invoke(f"Perfil do Cliente: {state['perfil_cliente']}\n\nPergunta: {content}")
@@ -133,7 +133,6 @@ def carregar_servicos_e_grafo():
             elif tool_name == "biblioteca_fiscal":
                 return "usar_biblioteca_fiscal"
             else:
-                # Retorno seguro caso o LLM invente um nome de ferramenta
                 return "gerar_resposta_sem_contexto"
 
 
@@ -142,7 +141,7 @@ def carregar_servicos_e_grafo():
             perfil = state["perfil_cliente"]
             query = f"Perfil: {perfil}\nPergunta: {pergunta}"
             
-            # Correção: Adiciona tratamento de exceção para garantir que docs seja uma lista
+            # Correção para o erro 'NoneType' object is not iterable
             try:
                 docs = biblioteca_tool.invoke(query) 
                 if docs is None:
@@ -153,10 +152,8 @@ def carregar_servicos_e_grafo():
             
             contexto_text = "\n---\n".join([doc.page_content for doc in docs])
             
-            # Prepara os metadados para o MCP
             metadados = [{"source": doc.metadata.get('document_type', 'Lei'), "page": doc.metadata.get('page'), "type": doc.metadata.get('document_type')} for doc in docs]
             
-            # Retorna uma AIMessage com o contexto para a próxima etapa
             msg = AIMessage(content=f"Contexto Biblioteca: {contexto_text}")
             # Garante que o retorno é um dicionário de estado válido
             return {"messages": [msg], "sources_data": metadados}
@@ -164,7 +161,7 @@ def carregar_servicos_e_grafo():
         def no_busca_web(state: AgentState):
             pergunta = state["messages"][-1].content
             
-            # Correção: Adiciona tratamento de exceção para garantir que docs seja uma lista
+            # Correção para o erro 'NoneType' object is not iterable
             try:
                 docs = web_search_tool.invoke(pergunta)
                 if docs is None:
@@ -176,7 +173,6 @@ def carregar_servicos_e_grafo():
             contexto_text = "\n---\n".join([str(doc) for doc in docs])
             metadados = [{"source": "Tavily Web Search", "page": None, "type": "WEB", "content": doc.get('content')} for doc in docs]
             
-            # Retorna uma AIMessage com o contexto para a próxima etapa
             msg = AIMessage(content=f"Contexto da Web (Notícias): {contexto_text}")
             # Garante que o retorno é um dicionário de estado válido
             return {"messages": [msg], "sources_data": metadados}
@@ -185,24 +181,21 @@ def carregar_servicos_e_grafo():
             messages = state["messages"]
             perfil = state["perfil_cliente"]
             
-            # Encontra a mensagem de contexto mais recente (que é uma AIMessage)
             contexto_msg = next((msg for msg in reversed(messages) if isinstance(msg, AIMessage) and ('Contexto' in msg.content)), None)
             contexto_juridico_bruto = contexto_msg.content if contexto_msg else "Nenhuma fonte relevante encontrada."
             
             # Pega a última HumanMessage original do usuário
-            # Correção: Busca pela última HumanMessage, não pela última mensagem do estado (que pode ser a AIMessage de contexto)
             pergunta_cliente_msg = next((msg.content for msg in messages if isinstance(msg, HumanMessage)), "Pergunta não encontrada.")
 
             # Formatar Fontes Detalhadas (para o MCP)
             fontes_detalhadas = []
             for i, fonte in enumerate(state.get("sources_data", [])):
                 try:
-                    # Garantir que page_number é None ou int, dependendo do tipo da fonte
                     page_num = fonte.get("page")
                     if isinstance(page_num, str) and page_num.isdigit():
                         page_num = int(page_num)
                     elif page_num is not None and not isinstance(page_num, int):
-                        page_num = None # Limpeza
+                        page_num = None
                         
                     fontes_detalhadas.append(FonteDocumento(
                         document_source=fonte.get("source", "N/A"),
@@ -216,13 +209,20 @@ def carregar_servicos_e_grafo():
 
             # CONSTRUIR E VALIDAR O PROTOCOLO (MCP)
             try:
+                # CORREÇÃO CRÍTICA: Uso de .get() com fallback seguro para thread_id
+                safe_thread_id = st.session_state.get("thread_id", "fallback_id_00") 
+                
                 context_protocol = ConsultaContext(
-                    trace_id=st.session_state.thread_id, perfil_cliente=perfil, pergunta_cliente=pergunta_cliente_msg,
-                    contexto_juridico_bruto=contexto_juridico_bruto, fontes_detalhadas=fontes_detalhadas,
+                    # Acessa com fallback, resolvendo o 'st.session_state has no attribute'
+                    trace_id=safe_thread_id, 
+                    perfil_cliente=perfil, 
+                    pergunta_cliente=pergunta_cliente_msg,
+                    contexto_juridico_bruto=contexto_juridico_bruto, 
+                    fontes_detalhadas=fontes_detalhadas,
                     prompt_mestre="O Agente Fiscal Advisor, especialista em reforma tributária."
                 )
             except Exception as e:
-                # Se falhar aqui, LangGraph será interrompido.
+                # Garante que o erro de validação do MCP é repassado
                 raise ValueError(f"Falha na validação do MCP (ContextProtocolModel): {e}")
 
             # Gerar Resposta (Usando o Protocolo Validado)
@@ -234,12 +234,10 @@ def carregar_servicos_e_grafo():
                 """
             )
             
-            # Encontra a última HumanMessage original do usuário
             ultima_mensagem_usuario = HumanMessage(content=pergunta_cliente_msg)
             
             response = llm.invoke([ultima_mensagem_usuario, prompt_mestre_msg])
             
-            # Garante que o retorno é um dicionário de estado válido
             return {"messages": [AIMessage(content=response.content)], "mcp_data": context_protocol.model_dump_json()}
 
         # --- COMPILAÇÃO DO GRAFO (O MAESTRO) ---
@@ -309,9 +307,7 @@ st.markdown("Pergunte sobre as leis (EC 132/LC 214) ou sobre notícias do congre
 
 # Exibe o histórico de mensagens
 for message in st.session_state.messages:
-    # Usamos o tradutor para garantir que a saída seja 'user' ou 'assistant'
     with st.chat_message(get_streamlit_role(message)): 
-        # Se for um objeto, pegamos o atributo .content; senão, o valor do dict
         content = message.content if hasattr(message, 'content') else message['content']
         st.markdown(content)
 
@@ -331,11 +327,11 @@ if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
                 mensagens_para_grafo = []
                 for msg in st.session_state.messages:
                     content = getattr(msg, 'content', msg.get('content', ''))
-                    role = getattr(msg, 'role', msg.get('role', 'user')) # assume 'user' se não definido
+                    role = getattr(msg, 'role', msg.get('role', 'user')) 
                     
                     if role in ['assistant', 'ai']:
                         mensagens_para_grafo.append(AIMessage(content=content))
-                    else: # user ou human
+                    else: 
                         mensagens_para_grafo.append(HumanMessage(content=content))
                 
                 # -------------------------------------------------------------
@@ -344,19 +340,22 @@ if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
                 langfuse_callbacks = [] 
                 if langfuse:
                     try:
+                        # O Langfuse também precisa do thread_id, acessamos com .get() por segurança
+                        safe_thread_id = st.session_state.get("thread_id", "fallback_id_00")
                         langfuse_callbacks = [langfuse.get_langchain_callback(
                             user_id="usuario_streamlit",
-                            session_id=st.session_state.thread_id
+                            session_id=safe_thread_id
                         )]
                     except AttributeError:
                         pass
                 
                 config = {
-                    "configurable": {"thread_id": st.session_state.thread_id},
+                    # Garantimos que a thread_id está configurada
+                    "configurable": {"thread_id": st.session_state.get("thread_id", "fallback_id_00")},
                     "callbacks": langfuse_callbacks
                 }
                 inputs = {
-                    "messages": mensagens_para_grafo, # <--- INPUT CORRIGIDO
+                    "messages": mensagens_para_grafo, 
                     "perfil_cliente": st.session_state.client_profile
                 }
                 
@@ -367,7 +366,6 @@ if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
                     # Loop de streaming do LangGraph
                     for event in agente.stream(inputs, config, stream_mode="values"):
                         
-                        # Correção para garantir que event não seja None e tenha a chave 'messages'
                         if not event or "messages" not in event:
                             continue
                             
@@ -377,7 +375,6 @@ if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
                         if new_message and new_message.type == "ai":
                             resposta_final = new_message.content
                         
-                        # Capturar o MCP (se disponível no evento final)
                         if "mcp_data" in event:
                              mcp_output = event["mcp_data"]
 
