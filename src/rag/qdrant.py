@@ -74,12 +74,22 @@ class RetrieverWrapper:
         self.retriever = retriever
 
     def retrieve_documents(self, query, client_profile=""):
+        
         enriched = expand_query(query, client_profile)
 
         try:
             # 🔥 AGORA SIM — CHAMA O RETRIEVER DE VERDADE
             docs = self.retriever.invoke(enriched)
+            from utils.logs import logger
 
+            logger.error("=== DEBUG RAG ===")
+            logger.error(f"Consulta enriquecida: {enriched}")
+            logger.error(f"Quantidade de documentos retornados: {len(docs)}")
+
+            for d in docs:
+                logger.error(f"Documento retornado >> page: {d.metadata.get('page')} "
+                            f"tipo: {d.metadata.get('document_type')} "
+                            f"conteúdo: {d.page_content[:200]}...")
             # --- metadados ---
             metadata_list = [
                 {
