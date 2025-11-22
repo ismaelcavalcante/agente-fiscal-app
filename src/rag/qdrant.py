@@ -74,22 +74,27 @@ class RetrieverWrapper:
         self.retriever = retriever
 
     def retrieve_documents(self, query, client_profile=""):
-        
         enriched = expand_query(query, client_profile)
 
         try:
-            # 🔥 AGORA SIM — CHAMA O RETRIEVER DE VERDADE
+            # 🔥 CHAMADA REAL PARA O QDRANT
             docs = self.retriever.invoke(enriched)
-            from utils.logs import logger
 
+            # 🔥 DEBUG — ADICIONAR AQUI
+            from utils.logs import logger
             logger.error("=== DEBUG RAG ===")
             logger.error(f"Consulta enriquecida: {enriched}")
             logger.error(f"Quantidade de documentos retornados: {len(docs)}")
 
-            for d in docs:
-                logger.error(f"Documento retornado >> page: {d.metadata.get('page')} "
-                            f"tipo: {d.metadata.get('document_type')} "
-                            f"conteúdo: {d.page_content[:200]}...")
+            for idx, d in enumerate(docs):
+                logger.error(
+                    f"[DOC {idx}] "
+                    f"page={d.metadata.get('page')} | "
+                    f"type={d.metadata.get('document_type')} | "
+                    f"source={d.metadata.get('source')} | "
+                    f"conteudo={d.page_content[:250]}..."
+                )
+
             # --- metadados ---
             metadata_list = [
                 {
@@ -100,7 +105,7 @@ class RetrieverWrapper:
                 for d in docs
             ]
 
-            # --- contexto textual completo ---
+            # --- contexto textual ---
             contexto = "\n\n".join(
                 [
                     f"[{d.metadata.get('document_type', 'Lei')} | pg {d.metadata.get('page', '?')}] "
