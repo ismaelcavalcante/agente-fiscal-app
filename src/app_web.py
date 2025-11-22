@@ -16,7 +16,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 # NOVO SDK LANGFUSE
-from langfuse.callbacks import CallbackHandler
+from langfuse.callback import CallbackHandler
 
 # ----------------------------------------------------
 # GARANTE QUE TODAS AS MENSAGENS DO SESSION STATE SEJAM DICT
