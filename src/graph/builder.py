@@ -1,4 +1,5 @@
 from langgraph.graph import StateGraph, END
+from graph.router import node_router   # ← IMPORT CORRETO DO ROUTER
 from graph.nodes import (
     node_rag_qdrant,
     node_web_search,
@@ -7,27 +8,32 @@ from graph.nodes import (
 )
 from utils.logs import logger
 
-state_schema = dict
+state_schema = dict  # simples, estável
+
 
 def build_graph(llm, retriever, web_tool):
     logger.info("⛓️  Construindo LangGraph (versão profissional)...")
 
     workflow = StateGraph(state_schema)
 
-    # Nodes
+    # -------------------------
+    # NODES
+    # -------------------------
     workflow.add_node("router", node_router)
     workflow.add_node("rag_qdrant", lambda s: node_rag_qdrant(s, retriever))
     workflow.add_node("web_search", lambda s: node_web_search(s, web_tool))
     workflow.add_node("direct_answer", lambda s: node_direct_answer(s, llm))
     workflow.add_node("generate_final", lambda s: node_generate_final(s, llm))
 
-    # Entry point
+    # PONTO DE ENTRADA
     workflow.set_entry_point("router")
 
-    # Roteamento correto
+    # -------------------------
+    # ROTEAMENTO CORRETO
+    # -------------------------
     workflow.add_conditional_edges(
         "router",
-        lambda state: state["__route__"],
+        lambda state: state["__route__"],   # ← ROUTER CORRETO
         {
             "RAG": "rag_qdrant",
             "WEB": "web_search",
