@@ -1,363 +1,163 @@
 import streamlit as st
-from openai import OpenAI
-from qdrant_client import QdrantClient
-from typing import Union, TypedDict, Annotated, List, Dict, Any
-import os
+from langchain_openai import ChatOpenAI
+from langfuse import Langfuse
+from langfuse.callbacks import CallbackHandler
 
-# LangChain e LangGraph
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_qdrant import Qdrant
-from langchain_community.tools.tavily_search import TavilySearchResults
-from langchain.tools.retriever import create_retriever_tool
-
-from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.memory import MemorySaver
-
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-
-# NOVO SDK LANGFUSE
-from langfuse.callback import CallbackHandler
-
-# ----------------------------------------------------
-# GARANTE QUE TODAS AS MENSAGENS DO SESSION STATE SEJAM DICT
-# ----------------------------------------------------
-def normalize_message(msg):
-    """Padroniza mensagens para dict(role, content)."""
-    if isinstance(msg, dict):
-        return msg
-    
-    if isinstance(msg, HumanMessage):
-        return {"role": "user", "content": msg.content}
-    
-    if isinstance(msg, AIMessage):
-        return {"role": "assistant", "content": msg.content}
-
-    return {"role": "assistant", "content": str(msg)}
-
-def message_to_lc(msg):
-    """Converte dict → HumanMessage | AIMessage"""
-    if msg["role"] == "user":
-        return HumanMessage(content=msg["content"])
-    else:
-        return AIMessage(content=msg["content"])
-
-# ----------------------------------------------------
-# CONFIGURAÇÃO DA PÁGINA
-# ----------------------------------------------------
-st.set_page_config(
-    page_title="Agente Fiscal v4.3 (Corrigido)",
-    page_icon="⚖️",
-    layout="wide"
+# módulos locais
+from utils.logs import logger
+from utils.messages import (
+    convert_history_to_lc,
+    dict_to_lc,
+    lc_to_dict
 )
 
-# ----------------------------------------------------
-# SESSION STATE (SEGURO)
-# ----------------------------------------------------
+from rag.qdrant import build_retriever
+from rag.web import build_web_tool
+from graph.builder import build_graph
+
+
+# ==============================
+# 🟦 CONFIG STREAMLIT
+# ==============================
+st.set_page_config(page_title="Consultor Fiscal IA", page_icon="💼")
+st.title("💼 Assistente Fiscal Inteligente")
+
+# ==============================
+# 🔑 CREDENCIAIS (use st.secrets no Streamlit Cloud)
+# ==============================
+OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+QDRANT_URL = st.secrets["QDRANT_URL"]
+QDRANT_API_KEY = st.secrets["QDRANT_API_KEY"]
+TAVILY_API_KEY = st.secrets["TAVILY_API_KEY"]
+LANGFUSE_PUBLIC = st.secrets["LANGFUSE_PUBLIC"]
+LANGFUSE_SECRET = st.secrets["LANGFUSE_SECRET"]
+
+
+# ==============================
+# 📌 PERFIL DO CLIENTE
+# ==============================
+DEFAULT_PROFILE = """
+Empresa do regime geral/presumido, comércio varejista, atuação em múltiplos estados.
+"""
+
+
+# ==============================
+# 🧠 INICIALIZAÇÃO DE ESTADO
+# ==============================
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# NORMALIZA TODAS AS ANTIGAS MENSAGENS
-st.session_state.messages = [normalize_message(m) for m in st.session_state.messages]
-
-if "client_profile" not in st.session_state:
-    st.session_state.client_profile = """{
-"nome_empresa": "Construtora Alfa Ltda",
-"cnae_principal": "4120-4/00 (Construção de Edifícios)",
-"regime_tributario": "Simples Nacional",
-"faturamento_anual": "R$ 3.000.000,00"
-}"""
+if "perfil_cliente" not in st.session_state:
+    st.session_state.perfil_cliente = DEFAULT_PROFILE
 
 if "thread_id" not in st.session_state:
-    st.session_state.thread_id = "1"
+    st.session_state.thread_id = "thread-1"
 
-if "db_count" not in st.session_state:
-    st.session_state.db_count = 0
 
-# ----------------------------------------------------
-# CONSTANTES
-# ----------------------------------------------------
-NOME_DA_COLECAO = "leis_fiscais_v1"
-MODELO_LLM = st.secrets.get("MODELO_LLM", "gpt-4o")
-MODELO_EMBEDDING = st.secrets.get("MODELO_EMBEDDING", "text-embedding-3-large")
+# ==============================
+# 🧠 MODELO LLM (OpenAI)
+# ==============================
+llm = ChatOpenAI(
+    api_key=OPENAI_API_KEY,
+    model="gpt-4o-mini",
+    temperature=0.2,
+)
 
-# ----------------------------------------------------
-# ESTADO DO GRAFO
-# ----------------------------------------------------
-class AgentState(TypedDict):
-    messages: Annotated[List[Any], lambda x, y: x + y]  
-    perfil_cliente: str
-    sources_data: List[Dict[str, Any]]
-    thread_id: str
-    contexto_juridico_bruto: str
-    mcp_data: str
 
-# ----------------------------------------------------
-# CARREGAR SERVIÇOS
-# ----------------------------------------------------
-@st.cache_resource
-def carregar_servicos_e_grafo():
+# ==============================
+# 🔍 FERRAMENTAS (Qdrant + Web)
+# ==============================
+retriever = build_retriever(
+    qdrant_url=QDRANT_URL,
+    qdrant_api_key=QDRANT_API_KEY,
+    collection_name="leis_fiscais_v1",
+    embedding_model_name="text-embedding-3-large",
+    openai_api_key=OPENAI_API_KEY,
+)
 
-    # validação dos secrets
-    required_secrets = [
-        "OPENAI_API_KEY", "QDRANT_URL", "QDRANT_API_KEY", "TAVILY_API_KEY"
-    ]
-    for sname in required_secrets:
-        if sname not in st.secrets:
-            st.error(f"Secret faltando: {sname}")
-            return None, None
+web_tool = build_web_tool(TAVILY_API_KEY)
 
-    # instâncias
-    llm = ChatOpenAI(
-        api_key=st.secrets["OPENAI_API_KEY"],
-        model=MODELO_LLM,
-        temperature=0
-    )
 
-    embeddings = OpenAIEmbeddings(
-        api_key=st.secrets["OPENAI_API_KEY"],
-        model=MODELO_EMBEDDING
-    )
+# ==============================
+# 🧠 LANGFUSE (SDK NOVO)
+# ==============================
+langfuse = Langfuse(
+    public_key=LANGFUSE_PUBLIC,
+    secret_key=LANGFUSE_SECRET,
+)
 
-    qdrant_client = QdrantClient(
-        url=st.secrets["QDRANT_URL"],
-        api_key=st.secrets["QDRANT_API_KEY"]
-    )
+callback_handler = CallbackHandler(
+    user_id="user",
+    session_id=st.session_state.thread_id
+)
 
-    # retriever SEM filtros problemáticos
-    qdrant_store = Qdrant(
-        client=qdrant_client,
-        collection_name=NOME_DA_COLECAO,
-        embeddings=embeddings
-    )
-    
-    retriever_obj = qdrant_store.as_retriever(search_kwargs={"k": 5})
 
-    biblioteca_tool = create_retriever_tool(
-        retriever_obj,
-        "biblioteca_fiscal",
-        "Use esta ferramenta para buscar legislação, artigos, LC 214, EC 132, IBS, CBS, regras fiscais."
-    )
+# ==============================
+# 🔗 GRAFO
+# ==============================
+app_graph = build_graph(llm, retriever, web_tool)
 
-    web_tool = TavilySearchResults(max_results=3)
 
-    tools = [biblioteca_tool, web_tool]
-
-    # -------------------------------------------------
-    # DEFINIÇÃO DOS NODES DO GRAFO
-    # -------------------------------------------------
-
-    def roteador(state: AgentState) -> str:
-        last = state["messages"][-1]
-        last_lc = message_to_lc(last)
-
-        tool_router = llm.bind_tools(tools)
-
-        smsg = SystemMessage(content="""
-Você é um assistente jurídico tributário especializado.
-Se a pergunta envolver leis, alíquotas, artigos, IBS, CBS, EC 132, use SEMPRE 'biblioteca_fiscal'.
-Se for sobre notícias ou informações atuais, use 'tavily_search_results'.
-""")
-
-        resp = tool_router.invoke([smsg, last_lc])
-
-        # nenhuma ferramenta detectada
-        if not resp.tool_calls:
-
-            txt = last["content"].lower()
-            keywords = ["lei", "artigo", "imposto", "alíquota", "tribut", "ibs", "cbs", "ec 132", "lc 214"]
-
-            if any(k in txt for k in keywords):
-                return "usar_biblioteca"
-
-            return "gerar_resposta_sem_contexto"
-
-        tool = resp.tool_calls[0]["name"]
-
-        if tool == "biblioteca_fiscal":
-            return "usar_biblioteca"
-
-        if tool == "tavily_search_results":
-            return "usar_web"
-
-        return "gerar_resposta_sem_contexto"
-
-    def no_biblioteca(state: AgentState):
-        pergunta = state["messages"][-1]["content"]
-        perfil = state["perfil_cliente"]
-        query = f"{pergunta} (Contexto: {perfil})"
-
-        try:
-            docs = retriever_obj.invoke(query) or []
-        except:
-            docs = []
-
-        contexto = "\n\n".join([f"Fonte: {d.metadata.get('source','Lei')} | {d.page_content}" for d in docs])
-        fontes = [{"source": d.metadata.get("source","Lei"), "page": d.metadata.get("page"), "type": d.metadata.get("document_type","Lei")} for d in docs]
-
-        return {"sources_data": fontes, "contexto_juridico_bruto": contexto}
-
-    def no_web(state: AgentState):
-        pergunta = state["messages"][-1]["content"]
-
-        try:
-            docs = web_tool.invoke(pergunta) or []
-        except:
-            docs = []
-
-        contexto = "\n---\n".join([d.get("content","") for d in docs])
-        fontes = [{"source": "Web", "page": None, "type": "WEB", "content": d.get("content","")} for d in docs]
-
-        return {"sources_data": fontes, "contexto_juridico_bruto": contexto}
-
-    def no_gerar(state: AgentState):
-        perfil = state["perfil_cliente"]
-        contexto = state["contexto_juridico_bruto"] or "Nenhuma legislação encontrada."
-        pergunta = state["messages"][-1]["content"]
-
-        system_prompt = f"""
-Você é um consultor tributário sênior.
-
-PERFIL DO CLIENTE:
-{perfil}
-
-CONTEXTO ENCONTRADO:
-{contexto}
-
-DIRETRIZES:
-1. Responda com base no contexto acima.
-2. Cite artigos e leis quando mencionados.
-3. Se o contexto não ajudar, diga isso ao usuário.
-"""
-
-        msgs = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=pergunta)
-        ]
-
-        out = llm.invoke(msgs)
-
-        return {
-            "messages": [
-                {"role": "assistant", "content": out.content}
-            ],
-            "mcp_data": ""
-        }
-
-    # -------------------------------------------------
-    # COMPILAÇÃO DO GRAFO
-    # -------------------------------------------------
-    workflow = StateGraph(AgentState)
-
-    workflow.add_node("usar_biblioteca", no_biblioteca)
-    workflow.add_node("usar_web", no_web)
-    workflow.add_node("gerar_resposta", no_gerar)
-    workflow.add_node("gerar_resposta_sem_contexto", no_gerar)
-
-    workflow.add_conditional_edges(
-        START, roteador,
-        {
-            "usar_biblioteca": "usar_biblioteca",
-            "usar_web": "usar_web",
-            "gerar_resposta_sem_contexto": "gerar_resposta_sem_contexto"
-        }
-    )
-
-    workflow.add_edge("usar_biblioteca", "gerar_resposta")
-    workflow.add_edge("usar_web", "gerar_resposta")
-    workflow.add_edge("gerar_resposta", END)
-    workflow.add_edge("gerar_resposta_sem_contexto", END)
-
-    memory = MemorySaver()
-    app = workflow.compile(checkpointer=memory)
-
-    # contagem do banco
-    try:
-        c = qdrant_client.count(NOME_DA_COLECAO, exact=True)
-        st.session_state.db_count = c.count
-    except:
-        st.session_state.db_count = 0
-
-    return app, True
-
-# ----------------------------------------------------
-# CARREGA SERVIÇOS
-# ----------------------------------------------------
-agente, langfuse_ok = carregar_servicos_e_grafo()
-
-# ----------------------------------------------------
-# SIDEBAR
-# ----------------------------------------------------
-with st.sidebar:
-    st.title("⚙️ Configurações")
-    st.subheader("Perfil do Cliente")
-
-    perfil_edit = st.text_area("JSON do Perfil:", st.session_state.client_profile, height=200)
-
-    if st.button("Salvar Perfil"):
-        st.session_state.client_profile = perfil_edit
-        st.success("Perfil atualizado!")
-
-    st.divider()
-    st.info(f"Documentos na Base: {st.session_state.db_count}")
-
-# ----------------------------------------------------
-# CHAT MAIN
-# ----------------------------------------------------
-st.title("🤖 Agente Fiscal v4.3")
-
+# ==============================
+# 💬 EXIBIR HISTÓRICO NO CHAT
+# ==============================
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+        st.write(msg["content"])
 
-prompt = st.chat_input("Digite sua dúvida tributária...")
+# ==============================
+# 💬 EXIBIR CONTEXTO MCP
+# ==============================
+with st.expander("🔍 Ver contexto MCP"):
+    if "mcp" in st.session_state:
+        st.json(st.session_state["mcp"].model_dump())
+    else:
+        st.caption("Nenhum MCP gerado ainda.")
 
-if prompt:
-    st.session_state.messages.append({"role": "user", "content": prompt})
+# ==============================
+# ✏️ CAMPO DE ENTRADA
+# ==============================
+user_input = st.chat_input("Digite sua pergunta tributária...")
 
-    with st.chat_message("user"):
-        st.markdown(prompt)
 
-    with st.chat_message("assistant"):
-        with st.spinner("Consultando legislação..."):
+# ==============================
+# 🚀 PROCESSAMENTO
+# ==============================
+if user_input:
 
-            mensagens_lc = [message_to_lc(m) for m in st.session_state.messages]
+    # 1. Exibe no chat
+    st.chat_message("user").write(user_input)
 
-            config = {
-                "configurable": {
-                    "thread_id": st.session_state.thread_id
-                }
-            }
+    # 2. Salva no histórico
+    st.session_state.messages.append({"role": "user", "content": user_input})
 
-            if langfuse_ok:
-                config["callbacks"] = [
-                    CallbackHandler(
-                        user_id="user",
-                        session_id=st.session_state.thread_id
-                    )
-                ]
+    # 3. Converte histórico para LangChain
+    lc_messages = convert_history_to_lc(st.session_state.messages)
 
-            entrada = {
-                "messages": st.session_state.messages,
-                "perfil_cliente": st.session_state.client_profile,
+    # 4. EXECUTA GRAFO
+    try:
+        result = app_graph.invoke(
+            {
+                "messages": lc_messages,
+                "perfil_cliente": st.session_state.perfil_cliente,
                 "thread_id": st.session_state.thread_id,
-                "contexto_juridico_bruto": "",
-                "sources_data": [],
-                "mcp_data": ""
-            }
+            },
+            config={"callbacks": [callback_handler]}
+        )
 
-            try:
-                resposta = ""
+        ai_msg = result["messages"][-1]
 
-                for event in agente.stream(entrada, config, stream_mode="values"):
-                    if "messages" in event:
-                        last = event["messages"][-1]
-                        resposta = last["content"]
+        # 5. Exibe resposta
+        st.chat_message("assistant").write(ai_msg.content)
 
-                if resposta:
-                    st.markdown(resposta)
-                    st.session_state.messages.append({"role": "assistant", "content": resposta})
-                else:
-                    st.warning("Nenhuma resposta foi gerada.")
+        # 6. Salva no histórico como dict
+        st.session_state.messages.append(
+            lc_to_dict(ai_msg)
+        )
 
-            except Exception as e:
-                st.error(f"Erro inesperado: {e}")
+    except Exception as e:
+        st.error("Ocorreu um erro durante a análise.")
+        logger.error(f"ERRO NO GRAFO: {e}")
+
+if "mcp" in result:
+    st.session_state["mcp"] = result["mcp"]
