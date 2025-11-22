@@ -1,133 +1,109 @@
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from utils.logs import logger
-from protocol import ConsultaContext, FonteDocumento
 
 
-def require_messages(state):
-    if "messages" not in state or not state["messages"]:
-        raise ValueError("State sem mensagens.")
-    return state["messages"]
+# ===========================
+# NODE: Roteador
+# ===========================
+def node_router(state):
+    from graph.router import node_router as router
+    return router(state)
 
 
-# ============================
-#   NODE — DIRECT ANSWER
-# ============================
+# ===========================
+# NODE: RAG com QDRANT
+# ===========================
+def node_rag_qdrant(state, retriever):
+    logger.debug("📌 [node_rag_qdrant] Recebendo state...")
 
-def node_direct_answer(state: dict, llm):
-    logger.debug("[node_direct_answer] Respondendo direto (sem RAG).")
-
-    msgs = require_messages(state)
-    question = msgs[-1].content
-
-    resposta = llm.invoke([
-        SystemMessage(content="Você é um consultor tributário experiente."),
-        HumanMessage(content=question)
-    ])
-
-    return {
-        "messages": [AIMessage(content=resposta.content)]
-    }
-
-
-# ============================
-#   NODE — RAG QDRANT (MANUAL)
-# ============================
-
-def node_rag_qdrant(state: dict, retriever):
-    logger.debug("[node_rag_qdrant] Executando busca Qdrant...")
-
-    msgs = require_messages(state)
-    question = msgs[-1].content
+    question = state["messages"][-1].content
     perfil = state.get("perfil_cliente", "")
 
     try:
-        metadata, contexto = retriever.retrieve_documents(
-            query=question,
-            client_profile=perfil
-        )
+        fontes, contexto = retriever.retrieve_documents(question, perfil)
 
-        logger.debug(f"[node_rag_qdrant] Recuperou {len(metadata)} documentos.")
-        return {
-            "contexto_juridico_bruto": contexto,
-            "sources_data": metadata
-        }
+        state["contexto_juridico_bruto"] = contexto
+        state["sources_data"] = fontes
+
+        return state
 
     except Exception as e:
-        logger.error(f"[RAG_QDRANT] Falha: {e}")
-        return {
-            "contexto_juridico_bruto": "",
-            "sources_data": []
-        }
+        logger.error(f"[RAG_QDRANT] Erro ao recuperar docs: {e}")
+        state["contexto_juridico_bruto"] = ""
+        state["sources_data"] = []
+        return state
 
 
-# ============================
-#   NODE — GERAÇÃO FINAL
-# ============================
+# ===========================
+# NODE: Web Search (Tavily)
+# ===========================
+def node_web_search(state, web_tool):
+    question = state["messages"][-1].content
+    result = web_tool.invoke({"query": question})
 
-def node_generate_final(state: dict, llm):
-    logger.debug("[node_generate_final] Gerando resposta final...")
+    state["contexto_juridico_bruto"] = result.get("answer", "")
+    state["sources_data"] = result.get("sources", [])
 
-    msgs = require_messages(state)
-    question = msgs[-1].content
+    return state
+
+
+# ===========================
+# NODE: Resposta Direta (sem RAG)
+# ===========================
+def node_direct_answer(state, llm):
+    logger.debug("📌 [node_direct_answer] Recebendo state...")
+
+    question = state["messages"][-1].content
+
+    resposta = llm.invoke([
+        SystemMessage(content="Você é um consultor tributário especializado em IBS e CBS."),
+        HumanMessage(content=question)
+    ])
+
+    state["messages"].append(AIMessage(content=resposta.content))
+    return state
+
+
+# ===========================
+# NODE: Resposta Final
+# ===========================
+def node_generate_final(state, llm):
+
+    logger.debug("📌 [node_generate_final] Gerando resposta final...")
+
+    question = state["messages"][-1].content
     perfil = state.get("perfil_cliente", "")
     contexto = state.get("contexto_juridico_bruto", "")
-    sources = state.get("sources_data", [])
-
-    fontes_txt = "\n".join(
-        [
-            f"- {s.get('document_type')} (página {s.get('page')}, fonte {s.get('source')})"
-            for s in sources
-        ]
-    )
+    fontes = state.get("sources_data", [])
 
     prompt = f"""
-Você é um consultor tributário sênior especializado em IBS/CBS/EC 132/LC 214.
+Você é um consultor tributário sênior.
 
 REGRAS:
-1. Só use o contexto jurídico recuperado (NÃO invente).
-2. Se o contexto não contiver base suficiente, responda:
-   "Com base no meu corpus atual (Qdrant), não encontrei fundamento jurídico para responder."
-3. Responda de forma objetiva, jurídica e vinculada ao perfil abaixo.
-4. Sempre cite as fontes no final.
+- Use EXCLUSIVAMENTE o contexto abaixo se ele existir.
+- Se o contexto estiver vazio, diga:
+  "Com base no meu corpus atual (Qdrant), não encontrei fundamento jurídico para responder."
+- Sempre conecte a resposta ao perfil da empresa.
+- Seja objetivo, técnico e juridicamente preciso.
+- Cite as fontes retornadas pelo RAG.
 
 PERFIL DO CLIENTE:
 {perfil}
 
-TRECHOS RECUPERADOS:
+CONTEXTO JURÍDICO RECUPERADO (RAG):
 {contexto}
 
 FONTES:
-{fontes_txt}
+{fontes}
 
 Pergunta:
-"{question}"
+{question}
 """
 
-    resposta = llm.invoke([
+    final = llm.invoke([
         SystemMessage(content=prompt),
         HumanMessage(content=question)
     ])
 
-    fontes_mcp = [
-        FonteDocumento(
-            document_source=d.get("source"),
-            page_number=d.get("page"),
-            chunk_index=i,
-            document_type=d.get("document_type")
-        )
-        for i, d in enumerate(sources)
-    ]
-
-    mcp = ConsultaContext(
-        trace_id=state.get("thread_id"),
-        perfil_cliente=perfil,
-        pergunta_cliente=question,
-        contexto_juridico_bruto=contexto,
-        fontes_detalhadas=fontes_mcp,
-        prompt_mestre=prompt
-    )
-
-    return {
-        "messages": [AIMessage(content=resposta.content)],
-        "mcp": mcp
-    }
+    state["messages"].append(AIMessage(content=final.content))
+    return state

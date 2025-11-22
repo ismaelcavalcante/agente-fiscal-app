@@ -1,25 +1,28 @@
 from utils.logs import logger
 
 
-def router_node(state: dict):
+def node_router(state: dict):
     logger.info("Roteador analisando pergunta...")
 
-    if not state or "messages" not in state or not state["messages"]:
-        return "direct_answer"
+    if not state or "messages" not in state:
+        return "DIRECT"
 
     question = state["messages"][-1].content.lower()
 
-    gatilhos_tributarios = [
-        "ibs", "cbs", "icms", "pis", "cofins",
-        "ec 132", "lc 214", "alíquota", "imposto",
-        "tribut", "fiscal", "não cumul", "crédito",
-        "benefício", "isenção", "substituição tributária",
-        "crédito de insumo", "crédito financeiro"
+    GATILHOS_RAG = [
+        "ibs", "cbs", "lc 214", "ec 132",
+        "reforma tributária", "crédito", "tribut",
+        "benefício fiscal", "não cumulatividade",
+        "substituição tributária", "imposto",
     ]
 
-    if any(t in question for t in gatilhos_tributarios):
-        logger.info("Roteador → RAG_QDRANT")
-        return "rag_qdrant"
+    if any(w in question for w in GATILHOS_RAG):
+        return "RAG"
 
-    logger.info("Roteador → DIRECT")
-    return "direct_answer"
+    if "lei" in question or "artigo" in question:
+        return "RAG"
+
+    if "pesquise" in question or "notícia" in question:
+        return "WEB"
+
+    return "DIRECT"
