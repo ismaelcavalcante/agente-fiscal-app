@@ -4,11 +4,12 @@ def node_router(state: dict):
 
     logger.info("Roteador analisando pergunta...")
 
-    messages = state.get("messages", [])
-    if not messages:
-        return {"__route__": "DIRECT"}
+    # Garantir que sempre existe messages
+    if "messages" not in state or not state["messages"]:
+        state["__route__"] = "DIRECT"
+        return state
 
-    question = messages[-1].content.lower()
+    question = state["messages"][-1].content.lower()
 
     gatilhos_rag = [
         "ibs", "cbs", "ec 132", "lc 214",
@@ -17,12 +18,16 @@ def node_router(state: dict):
     ]
 
     if any(g in question for g in gatilhos_rag):
-        return {"__route__": "RAG"}
+        state["__route__"] = "RAG"
+        return state
 
     if "lei" in question or "artigo" in question:
-        return {"__route__": "RAG"}
+        state["__route__"] = "RAG"
+        return state
 
     if "pesquise" in question or "notícia" in question:
-        return {"__route__": "WEB"}
+        state["__route__"] = "WEB"
+        return state
 
-    return {"__route__": "DIRECT"}
+    state["__route__"] = "DIRECT"
+    return state
