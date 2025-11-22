@@ -116,25 +116,24 @@ def carregar_servicos_e_grafo():
             messages = state["messages"]
             last_message = messages[-1]
             
-            # O Roteador agora usa a lista "tools"
             tool_router_llm = llm.bind_tools(tools)
             
             # Garante que a última mensagem é a HumanMessage do usuário.
-            # Se for uma BaseMessage, usamos .content.
             content = last_message.content
             
             response = tool_router_llm.invoke(f"Perfil do Cliente: {state['perfil_cliente']}\n\nPergunta: {content}")
             
             if not response.tool_calls:
                 return "gerar_resposta_sem_contexto"
+            
             tool_name = response.tool_calls[0]["name"]
             
-            # Aqui comparamos o nome da função escolhida pelo LLM
-            if tool_name == "tavily_search_results": # Nome padrão da TavilySearchResults tool
+            if tool_name == "tavily_search_results": 
                 return "usar_busca_web"
             elif tool_name == "biblioteca_fiscal":
                 return "usar_biblioteca_fiscal"
             else:
+                # Retorno seguro caso o LLM invente um nome de ferramenta
                 return "gerar_resposta_sem_contexto"
 
 
@@ -143,8 +142,14 @@ def carregar_servicos_e_grafo():
             perfil = state["perfil_cliente"]
             query = f"Perfil: {perfil}\nPergunta: {pergunta}"
             
-            # Executamos a ferramenta (Tool) da biblioteca
-            docs = biblioteca_tool.invoke(query) 
+            # Correção: Adiciona tratamento de exceção para garantir que docs seja uma lista
+            try:
+                docs = biblioteca_tool.invoke(query) 
+                if docs is None:
+                    docs = []
+            except Exception as e:
+                print(f"Erro ao invocar biblioteca_tool: {e}")
+                docs = []
             
             contexto_text = "\n---\n".join([doc.page_content for doc in docs])
             
@@ -153,15 +158,27 @@ def carregar_servicos_e_grafo():
             
             # Retorna uma AIMessage com o contexto para a próxima etapa
             msg = AIMessage(content=f"Contexto Biblioteca: {contexto_text}")
+            # Garante que o retorno é um dicionário de estado válido
             return {"messages": [msg], "sources_data": metadados}
 
         def no_busca_web(state: AgentState):
             pergunta = state["messages"][-1].content
-            docs = web_search_tool.invoke(pergunta)
+            
+            # Correção: Adiciona tratamento de exceção para garantir que docs seja uma lista
+            try:
+                docs = web_search_tool.invoke(pergunta)
+                if docs is None:
+                    docs = []
+            except Exception as e:
+                print(f"Erro ao invocar web_search_tool: {e}")
+                docs = []
+                
             contexto_text = "\n---\n".join([str(doc) for doc in docs])
-            metadados = [{"source": "Tavily Web Search", "page": None, "type": "WEB", "content": doc['content']} for doc in docs]
+            metadados = [{"source": "Tavily Web Search", "page": None, "type": "WEB", "content": doc.get('content')} for doc in docs]
+            
             # Retorna uma AIMessage com o contexto para a próxima etapa
             msg = AIMessage(content=f"Contexto da Web (Notícias): {contexto_text}")
+            # Garante que o retorno é um dicionário de estado válido
             return {"messages": [msg], "sources_data": metadados}
 
         def no_gerador_resposta(state: AgentState):
@@ -173,19 +190,28 @@ def carregar_servicos_e_grafo():
             contexto_juridico_bruto = contexto_msg.content if contexto_msg else "Nenhuma fonte relevante encontrada."
             
             # Pega a última HumanMessage original do usuário
-            pergunta_cliente_msg = next((msg.content for msg in reversed(messages) if isinstance(msg, HumanMessage)), "Pergunta não encontrada.")
+            # Correção: Busca pela última HumanMessage, não pela última mensagem do estado (que pode ser a AIMessage de contexto)
+            pergunta_cliente_msg = next((msg.content for msg in messages if isinstance(msg, HumanMessage)), "Pergunta não encontrada.")
 
             # Formatar Fontes Detalhadas (para o MCP)
             fontes_detalhadas = []
             for i, fonte in enumerate(state.get("sources_data", [])):
                 try:
+                    # Garantir que page_number é None ou int, dependendo do tipo da fonte
+                    page_num = fonte.get("page")
+                    if isinstance(page_num, str) and page_num.isdigit():
+                        page_num = int(page_num)
+                    elif page_num is not None and not isinstance(page_num, int):
+                        page_num = None # Limpeza
+                        
                     fontes_detalhadas.append(FonteDocumento(
                         document_source=fonte.get("source", "N/A"),
-                        page_number=fonte.get("page"),
+                        page_number=page_num,
                         chunk_index=i + 1,
                         document_type=fonte.get("type", "DESCONHECIDO")
                     ))
-                except Exception:
+                except Exception as e:
+                    print(f"Erro ao formatar FonteDocumento: {e}") 
                     pass 
 
             # CONSTRUIR E VALIDAR O PROTOCOLO (MCP)
@@ -196,6 +222,7 @@ def carregar_servicos_e_grafo():
                     prompt_mestre="O Agente Fiscal Advisor, especialista em reforma tributária."
                 )
             except Exception as e:
+                # Se falhar aqui, LangGraph será interrompido.
                 raise ValueError(f"Falha na validação do MCP (ContextProtocolModel): {e}")
 
             # Gerar Resposta (Usando o Protocolo Validado)
@@ -207,15 +234,12 @@ def carregar_servicos_e_grafo():
                 """
             )
             
-            # As mensagens para o LLM agora incluem o histórico do usuário E o prompt mestre
-            # O estado LangGraph acumula todas as HumanMessage e AIMessage de contexto.
-            # Vamos limpar as mensagens para enviar apenas a última HumanMessage original + o novo prompt mestre
-            
             # Encontra a última HumanMessage original do usuário
             ultima_mensagem_usuario = HumanMessage(content=pergunta_cliente_msg)
             
             response = llm.invoke([ultima_mensagem_usuario, prompt_mestre_msg])
             
+            # Garante que o retorno é um dicionário de estado válido
             return {"messages": [AIMessage(content=response.content)], "mcp_data": context_protocol.model_dump_json()}
 
         # --- COMPILAÇÃO DO GRAFO (O MAESTRO) ---
@@ -342,9 +366,14 @@ if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
                     
                     # Loop de streaming do LangGraph
                     for event in agente.stream(inputs, config, stream_mode="values"):
-                        new_message = event.get("messages", [None])[-1]
                         
-                        # --- CORREÇÃO AQUI: USANDO .type AO INVÉS DE .role ---
+                        # Correção para garantir que event não seja None e tenha a chave 'messages'
+                        if not event or "messages" not in event:
+                            continue
+                            
+                        new_message = event["messages"][-1]
+                        
+                        # Correção do .role para .type
                         if new_message and new_message.type == "ai":
                             resposta_final = new_message.content
                         
@@ -356,12 +385,9 @@ if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
                     
                     # 2. Salva a resposta no histórico no formato seguro de DICT
                     st.session_state.messages.append({"role": "assistant", "content": resposta_final})
-                    
-                    # Opcional: Mostrar o MCP na interface (para debug ou transparência)
-                    # if mcp_output:
-                    #     st.json({"MCP Protocol": mcp_output})
 
                 except Exception as e:
+                    # Se ocorrer um erro no LangGraph, exibe a mensagem de erro
                     st.error(f"Erro ao executar o agente: {e}")
                     print(f"Erro na execução do grafo: {e}")
     else:
