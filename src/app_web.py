@@ -243,24 +243,49 @@ for message in st.session_state.messages:
         st.markdown(content)
 
 # Recebe a nova pergunta do usuário
+# Recebe a nova pergunta do usuário
 if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
     
-    # ... (O restante da lógica de execução que não usa o Langfuse) ...
+    # 1. Adiciona a mensagem do usuário ao histórico (Formato seguro de DICT)
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    if agente: # Agora só checamos se o Agente está pronto
+    if agente: # Já sabemos que langfuse pode ser None, mas o agente deve estar lá
         with st.chat_message("assistant"):
-            with st.spinner("O Agente está pensando..."):
+            with st.spinner("O Agente está pensando... (Rastreando com Langfuse)..."):
                 
-                # Prepara os Callbacks: Agora é sempre uma lista vazia, eliminando a falha
+                # --- 1. CRIAÇÃO DA LISTA DE MENSAGENS LIMPA (A CORREÇÃO) ---
+                mensagens_para_grafo = []
+                for msg in st.session_state.messages:
+                    # Verifica se o objeto já é LangChain (BaseMessage)
+                    if isinstance(msg, BaseMessage):
+                        mensagens_para_grafo.append(msg)
+                    else:
+                        # Se for um Dicionário (o formato que salvamos), converte para BaseMessage
+                        if msg['role'] == 'user':
+                            mensagens_para_grafo.append(HumanMessage(content=msg['content']))
+                        else:
+                            mensagens_para_grafo.append(AIMessage(content=msg['content']))
+                # -------------------------------------------------------------
+                
+                # Prepara os Callbacks (Com lógica defensiva para Langfuse = None)
+                langfuse_callbacks = [] 
+                if langfuse:
+                    try:
+                        langfuse_callbacks = [langfuse.get_langchain_callback(
+                            user_id="usuario_streamlit",
+                            session_id=st.session_state.thread_id
+                        )]
+                    except AttributeError:
+                        pass # Falha na chamada, mas o programa continua.
+
                 config = {
                     "configurable": {"thread_id": st.session_state.thread_id},
-                    "callbacks": [] 
+                    "callbacks": langfuse_callbacks
                 }
                 inputs = {
-                    "messages": [HumanMessage(content=prompt)],
+                    "messages": mensagens_para_grafo, # <--- INPUT CORRIGIDO
                     "perfil_cliente": st.session_state.client_profile
                 }
                 
@@ -272,6 +297,8 @@ if prompt := st.chat_input("O que o congresso decidiu hoje sobre o cashback?"):
                             resposta_final = new_message.content
 
                     st.markdown(resposta_final)
+                    
+                    # 2. Salva a resposta no histórico no formato seguro de DICT
                     st.session_state.messages.append({"role": "assistant", "content": resposta_final})
                 
                 except Exception as e:
