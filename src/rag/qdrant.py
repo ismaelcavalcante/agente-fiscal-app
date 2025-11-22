@@ -26,10 +26,10 @@ class RetrieverWrapper:
             results = self.client.query_points(
                 collection_name=self.collection,
                 query=vector,
+                vector_name="default",
                 limit=6,
                 search_params=SearchParams(hnsw_ef=128)
             )
-
         except Exception as e:
             logger.error(f"[RAG_QDRANT] Erro: {e}")
             raise

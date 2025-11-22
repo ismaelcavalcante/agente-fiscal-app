@@ -1,3 +1,6 @@
+import pkg_resources
+print("=== VERSÃO QDRANT CLIENT ===", pkg_resources.get_distribution("qdrant-client").version)
+
 import streamlit as st
 from langchain_openai import ChatOpenAI
 from langfuse import Langfuse
