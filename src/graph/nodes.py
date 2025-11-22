@@ -146,81 +146,55 @@ obrigações acessórias e distribuição da receita.
 def node_generate_final(state: dict, llm):
     logger.debug("📌 [node_generate_final] Gerando resposta final...")
 
-    # ----------------------
-    # Validar mensagens
-    # ----------------------
-    try:
-        msgs = require_messages(state)
-        pergunta = msgs[-1].content
-    except Exception as e:
-        logger.error(f"generate_final → state inválido: {e}")
-        return {
-            "messages": [AIMessage(content="Erro ao gerar resposta final.")],
-            "mcp": None
-        }
+    msgs = require_messages(state)
+    question = msgs[-1].content
 
-    # ----------------------
-    # Dados complementares
-    # ----------------------
-    perfil = state.get("perfil_cliente", "{}")
+    perfil = state.get("perfil_cliente", "")
     contexto = state.get("contexto_juridico_bruto", "")
-    fontes = state.get("sources_data", [])
+    sources_list = state.get("sources_data", [])
 
-    # ----------------------
-    # SYSTEM PROMPT FORTALECIDO
-    # ----------------------
-    system_prompt = f"""
-Você é um CONSULTOR TRIBUTÁRIO SÊNIOR especializado na EC 132/2023 (IVA Dual),
-no IBS municipal/estadual, CBS federal e regimes de transição.
+    # Transformar fontes em texto citável
+    fontes_txt = ""
+    for src in sources_list:
+        fontes_txt += f"- {src.get('source')} (página {src.get('page')}, tipo {src.get('document_type')})\n"
 
-SEMPRE responda:
-- usando o PERFIL do contribuinte (JSON abaixo)
-- usando o CONTEXTO jurídico do RAG
-- citando eventuais condicionantes
-- mostrando claramente se há ou não DIREITO AO CRÉDITO DE IBS
-- sempre contextualizando conforme a ATIVIDADE ECONÔMICA real da empresa
+    prompt_sistema = f"""
+Você é um consultor tributário sênior especializado em IBS, CBS, ICMS, e transição EC 132/LC 214.
 
-PERFIL DO CONTRIBUINTE (IMPORTANTE):
+REGRAS OBRIGATÓRIAS:
+1. Você só pode responder com base EXCLUSIVA no contexto abaixo.
+2. É PROIBIDO adicionar qualquer informação fora do contexto.
+3. Se o contexto não contiver elementos suficientes, responda:
+   "Com base no meu corpus atual (Qdrant), não encontrei fundamento jurídico para responder."
+4. Sempre cite as fontes utilizadas no final.
+5. Responda de forma precisa, técnica, objetiva e SEM generalidades.
+6. Sempre conecte o conteúdo ao PERFIL do cliente, contextualizando o impacto jurídico.
+
+PERFIL DO CLIENTE:
 {perfil}
 
-CONTEXTO JURÍDICO DISPONÍVEL:
+TRECHOS JURÍDICOS RECUPERADOS (RAG):
 {contexto}
 
-REGRAS PARA CRÉDITO IBS:
-1. O fato gerador deve ser operação tributada.
-2. O item comprado deve gerar crédito conforme EC 132.
-3. A atividade econômica define o direito.
-4. Compras para uso e consumo imediato normalmente geram crédito.
-5. Serviços tomados para execução da atividade geram crédito.
-6. Atividades isentas, imunes ou não tributadas NÃO geram crédito.
-7. Obras de construção civil têm regras específicas.
-8. Se o perfil for Simples Nacional: IBS NÃO É RECOLHIDO → NÃO GERA CRÉDITO.
+FONTES:
+{fontes_txt}
+
+Agora responda de maneira jurídica rigorosa a pergunta:
+"{question}"
 """
 
-    # ----------------------
-    # Gerar resposta
-    # ----------------------
-    try:
-        resposta = llm.invoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=pergunta)
-        ])
-    except Exception as e:
-        logger.error(f"Erro no LLM final: {e}")
-        return {
-            "messages": [AIMessage(content="Erro ao gerar resposta final.")],
-            "mcp": None
-        }
+    resposta = llm.invoke([
+        SystemMessage(content=prompt_sistema),
+        HumanMessage(content=question)
+    ])
 
-    # ----------------------
     # Construir MCP
-    # ----------------------
     fontes_mcp = []
-    for i, f in enumerate(fontes):
+    for i, f in enumerate(sources_list):
         fontes_mcp.append(
             FonteDocumento(
                 document_source=str(f.get("source", "DESCONHECIDO")),
-                page_number=f.get("page", None),
+                page_number=f.get("page"),
                 chunk_index=i,
                 document_type=str(f.get("document_type", "LEI"))
             )
@@ -229,10 +203,10 @@ REGRAS PARA CRÉDITO IBS:
     mcp = ConsultaContext(
         trace_id=state.get("thread_id"),
         perfil_cliente=perfil,
-        pergunta_cliente=pergunta,
+        pergunta_cliente=question,
         contexto_juridico_bruto=contexto,
         fontes_detalhadas=fontes_mcp,
-        prompt_mestre=system_prompt
+        prompt_mestre=prompt_sistema
     )
 
     return {
