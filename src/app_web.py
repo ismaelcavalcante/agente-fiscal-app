@@ -124,6 +124,7 @@ def carregar_servicos_e_grafo():
             
             content = last_message.content
             
+            # O roteador considera o perfil do cliente
             response = tool_router_llm.invoke(f"Perfil do Cliente: {state['perfil_cliente']}\n\nPergunta: {content}")
             
             if not response.tool_calls:
@@ -157,8 +158,6 @@ def carregar_servicos_e_grafo():
             
             metadados = [{"source": doc.metadata.get('document_type', 'Lei'), "page": doc.metadata.get('page'), "type": doc.metadata.get('document_type')} for doc in docs]
             
-            # msg = AIMessage(content=f"Contexto Biblioteca: {contexto_text}") # <-- REMOVIDO
-            
             # CORREÇÃO 2: Retorna o contexto bruto no campo de estado
             return {"sources_data": metadados, "contexto_juridico_bruto": contexto_text}
 
@@ -177,8 +176,6 @@ def carregar_servicos_e_grafo():
             contexto_text = "\n---\n".join([str(doc) for doc in docs])
             metadados = [{"source": "Tavily Web Search", "page": None, "type": "WEB", "content": doc.get('content')} for doc in docs]
             
-            # msg = AIMessage(content=f"Contexto da Web (Notícias): {contexto_text}") # <-- REMOVIDO
-            
             # CORREÇÃO 3: Retorna o contexto bruto no campo de estado
             return {"sources_data": metadados, "contexto_juridico_bruto": contexto_text}
 
@@ -190,7 +187,6 @@ def carregar_servicos_e_grafo():
             contexto_juridico_bruto = state.get("contexto_juridico_bruto", "Nenhuma fonte relevante encontrada.")
             
             # Pega a última HumanMessage original do usuário
-            # A pergunta mais recente é sempre a última HumanMessage da lista
             pergunta_cliente_msg = messages[-1].content 
 
             # Formatar Fontes Detalhadas (para o MCP)
@@ -232,6 +228,8 @@ def carregar_servicos_e_grafo():
                 raise ValueError(f"Falha na validação do MCP (ContextProtocolModel): {e}")
 
             # Gerar Resposta (Usando o Protocolo Validado)
+            # CORREÇÃO 5: Injetar o Perfil do Cliente diretamente no System Prompt para que o modelo possa responder 
+            # perguntas sobre o perfil, mesmo sem contexto RAG.
             prompt_mestre_msg = HumanMessage(
                 content=f"""
                 {context_protocol.prompt_mestre}
