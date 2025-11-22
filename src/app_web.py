@@ -235,8 +235,12 @@ def carregar_servicos_e_grafo():
             prompt_mestre_msg = HumanMessage(
                 content=f"""
                 {context_protocol.prompt_mestre}
-                Com base no contexto a seguir, responda à última pergunta do usuário.
-                **Contexto Jurídico Validado:** {contexto_juridico_bruto}
+                Você está respondendo à pergunta de um cliente. Use as informações de perfil e contexto fornecidas para formular sua resposta.
+
+                **Perfil do Cliente:** {perfil}
+                **Contexto Jurídico Validado (RAG):** {contexto_juridico_bruto}
+
+                Com base nas informações acima, responda à última pergunta do usuário. Se o Contexto Jurídico Validado for "Nenhuma fonte relevante encontrada.", responda apenas com base no seu conhecimento geral ou no Perfil do Cliente.
                 """
             )
             
