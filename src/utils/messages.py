@@ -1,42 +1,26 @@
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 
-
-def dict_to_lc(msg: dict) -> BaseMessage:
+def convert_history_to_lc(history):
     """
-    Converts a Streamlit message dict (role/content) into a LangChain message.
-    Ensures uniformity across the application.
+    Se a mensagem já é LangChain Message → retorna como está.
+    Se for dict → converte para LangChain Message.
     """
-    role = msg.get("role")
-    content = msg.get("content", "")
-
-    if role == "user":
-        return HumanMessage(content=content)
-    elif role == "assistant":
-        return AIMessage(content=content)
-    elif role == "system":
-        return SystemMessage(content=content)
-    else:
-        # fallback to human message
-        return HumanMessage(content=content)
-
-
-def lc_to_dict(msg: BaseMessage) -> dict:
-    """
-    Converts LangChain messages back to Streamlit dict format.
-    """
-    role = msg.type.replace("human", "user").replace("ai", "assistant")
-    return {"role": role, "content": msg.content}
+    lc_messages = []
+    for msg in history:
+        if isinstance(msg, BaseMessage):
+            lc_messages.append(msg)
+        else:
+            role = msg.get("role")
+            content = msg.get("content", "")
+            if role == "user":
+                lc_messages.append(HumanMessage(content=content))
+            else:
+                lc_messages.append(AIMessage(content=content))
+    return lc_messages
 
 
-def convert_history_to_lc(history: list[dict]) -> list[BaseMessage]:
-    """
-    Converts Streamlit session_state messages into LangChain-compatible list.
-    """
-    return [dict_to_lc(m) for m in history]
-
-
-def convert_history_to_streamlit(messages: list[BaseMessage]) -> list[dict]:
-    """
-    Converts LangChain/LLM messages back into Streamlit dict format.
-    """
-    return [lc_to_dict(m) for m in messages]
+def lc_to_streamlit(msg: BaseMessage):
+    return {
+        "role": "assistant" if isinstance(msg, AIMessage) else "user",
+        "content": msg.content
+    }

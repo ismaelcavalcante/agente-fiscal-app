@@ -1,7 +1,6 @@
 import streamlit as st
 from langchain_openai import ChatOpenAI
 from langfuse import Langfuse
-from langchain_core.messages import HumanMessage, AIMessage
 
 from components.perfil_select import selecionar_perfil
 from components.perfil_form import editar_perfil_form
@@ -10,14 +9,14 @@ from components.perfil_upload import upload_perfil_json
 from graph.builder import build_graph
 from rag.qdrant import build_retriever
 from rag.web import build_web_tool
-from utils.messages import convert_history_to_lc, lc_to_dict
 from utils.logs import logger
 
+from langchain_core.messages import HumanMessage, AIMessage
 import json
 
 
 # ===============================
-#  Streamlit Config
+#  Configuração Streamlit
 # ===============================
 st.set_page_config(page_title="Consultor Fiscal IA", page_icon="💼")
 st.title("💼 Assistente Fiscal Inteligente")
@@ -33,7 +32,7 @@ if "perfil_ativo" not in st.session_state:
 
 
 # ===============================
-#  Lateral — controle de perfis
+#  Sidebar: seleção/edição de perfis
 # ===============================
 with st.sidebar:
     st.header("🏢 Perfis da Empresa")
@@ -43,32 +42,31 @@ with st.sidebar:
     st.subheader("➕ Criar / Editar Perfil")
     editar_perfil_form()
 
-    st.subheader("📤 Upload de JSON")
+    st.subheader("📤 Upload JSON do Perfil")
     upload_perfil_json()
 
 
 # ===============================
-#  Conteúdo principal bloqueado
-#  se não houver perfil selecionado
+#  Impedir uso sem perfil carregado
 # ===============================
 if not st.session_state.perfil_ativo:
     st.warning("Selecione ou crie um perfil na lateral para começar.")
     st.stop()
 
-perfil_cliente = st.session_state.perfis[st.session_state.perfil_ativo]
+perfil_cliente = st.session_state.perfis[st.session_state.perfil_ativo]  # ← Como dict
 
 
 # ===============================
-#  Sessão de histórico
+#  Sessão de histórico de mensagens
 # ===============================
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = []  # Sempre HumanMessage / AIMessage
 if "thread_id" not in st.session_state:
     st.session_state.thread_id = "thread-1"
 
 
 # ===============================
-#  LLM
+#  Inicializar o modelo LLM
 # ===============================
 llm = ChatOpenAI(
     model="gpt-4o-mini",
@@ -101,50 +99,57 @@ langfuse = Langfuse(
 
 
 # ===============================
-#  Grafo
+#  Construir o Grafo
 # ===============================
 app_graph = build_graph(llm, retriever, web_tool)
 
 
 # ===============================
-#  Mostrar histórico
+#  Mostrar histórico no chat
 # ===============================
 for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.write(msg["content"])
+    role = "assistant" if isinstance(msg, AIMessage) else "user"
+    with st.chat_message(role):
+        st.write(msg.content)
 
 
 # ===============================
-#  Entrada do usuário
+#  Entrada do Usuário
 # ===============================
-user_input = st.chat_input("Digite sua pergunta tributária...")
+user_input = st.chat_input("Faça sua pergunta tributária...")
 
 
 # ===============================
-#  Execução
+#  Execução Principal
 # ===============================
 if user_input:
+
+    # Mostrar mensagem do usuário
     st.chat_message("user").write(user_input)
+
+    # Armazenar como HumanMessage
     st.session_state.messages.append(HumanMessage(content=user_input))
 
-    lc_messages = convert_history_to_lc(st.session_state.messages)
-
     try:
-        st.write("DEBUG MESSAGES STATE:", st.session_state.messages)
+        # Invocar grafo
         result = app_graph.invoke(
             {
-                "messages": lc_messages,
+                "messages": st.session_state.messages,
                 "perfil_cliente": perfil_cliente,
             },
             config={"configurable": {"thread_id": st.session_state.thread_id}}
         )
 
+        # Extraindo a última mensagem (AI)
         ai_msg = result["messages"][-1]
 
+        # Mostrar no chat
         st.chat_message("assistant").write(ai_msg.content)
 
+        # Armazenar histórico
         st.session_state.messages.append(ai_msg)
 
+        # Langfuse tracking
         langfuse.generation(
             name="resposta_final",
             model="gpt-4o-mini",
@@ -153,5 +158,5 @@ if user_input:
         )
 
     except Exception as e:
-        st.error("Ocorreu um erro durante a análise.")
         logger.error(f"Erro no fluxo: {e}")
+        st.error("Ocorreu um erro durante a análise. Verifique os logs.")
