@@ -1,7 +1,6 @@
 import streamlit as st
 from langchain_openai import ChatOpenAI
 from langfuse import Langfuse
-import pprint
 
 from components.perfil_select import selecionar_perfil
 from components.perfil_form import editar_perfil_form
@@ -13,7 +12,6 @@ from rag.web import build_web_tool
 from utils.logs import logger
 
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
-import json
 
 
 # ===========================
@@ -24,7 +22,7 @@ st.title("💼 Assistente Fiscal Inteligente")
 
 
 # ===========================
-# Perfis do cliente
+# Perfis no SessionState
 # ===========================
 if "perfis" not in st.session_state:
     st.session_state.perfis = {}
@@ -40,19 +38,22 @@ with st.sidebar:
     st.subheader("➕ Criar / Editar Perfil")
     editar_perfil_form()
 
-    st.subheader("📤 Importar Perfil via JSON")
+    st.subheader("📤 Upload JSON do Perfil")
     upload_perfil_json()
 
 
+# ===========================
+# Bloquear se não houver perfil selecionado
+# ===========================
 if not st.session_state.perfil_ativo:
-    st.warning("Selecione ou crie um perfil para continuar.")
+    st.warning("Selecione ou crie um perfil na lateral para começar.")
     st.stop()
 
 perfil_cliente = st.session_state.perfis[st.session_state.perfil_ativo]
 
 
 # ===========================
-# Histórico
+# Histórico no SessionState
 # ===========================
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -62,22 +63,24 @@ if "thread_id" not in st.session_state:
 
 
 # ===========================
-# Sanitização do Histórico
+# Sanitização do histórico
 # ===========================
 def sanitize_history():
-    """Converte quaisquer mensagens antigas (dict) em mensagens LC."""
     fixed = []
     for msg in st.session_state.messages:
         if isinstance(msg, BaseMessage):
             fixed.append(msg)
-            continue
-        if isinstance(msg, dict):
-            role = msg.get("role")
+        elif isinstance(msg, dict):
+            role = msg.get("role", "user")
             content = msg.get("content", "")
             if role == "assistant":
                 fixed.append(AIMessage(content=content))
             else:
                 fixed.append(HumanMessage(content=content))
+        else:
+            # qualquer outra coisa -> descartamos
+            continue
+
     st.session_state.messages = fixed
 
 
@@ -85,7 +88,7 @@ sanitize_history()
 
 
 # ===========================
-# LLM
+# Inicializar LLM
 # ===========================
 llm = ChatOpenAI(
     model="gpt-4o-mini",
@@ -95,7 +98,7 @@ llm = ChatOpenAI(
 
 
 # ===========================
-# RAG + TAVILY
+# RAG e Web Search
 # ===========================
 retriever = build_retriever(
     url=st.secrets["QDRANT_URL"],
@@ -109,7 +112,7 @@ web_tool = build_web_tool(st.secrets["TAVILY_API_KEY"])
 
 
 # ===========================
-# L angfuse
+# Langfuse
 # ===========================
 langfuse = Langfuse(
     public_key=st.secrets["LANGFUSE_PUBLIC_KEY"],
@@ -124,7 +127,7 @@ app_graph = build_graph(llm, retriever, web_tool)
 
 
 # ===========================
-# Mostrar histórico
+# Exibir histórico no chat
 # ===========================
 for msg in st.session_state.messages:
     role = "assistant" if isinstance(msg, AIMessage) else "user"
@@ -133,37 +136,51 @@ for msg in st.session_state.messages:
 
 
 # ===========================
-# Entrada
+# Entrada do usuário
 # ===========================
-user_input = st.chat_input("Escreva sua dúvida tributária...")
+user_input = st.chat_input("Digite sua pergunta tributária...")
 
 
 # ===========================
-# Execução
+# Execução do fluxo
 # ===========================
 if user_input:
 
-    # registrar no histórico
-    st.session_state.messages.append(HumanMessage(content=user_input))
+    # 1) Sempre adicionar a mensagem AO HISTÓRICO antes de tudo
+    human_msg = HumanMessage(content=user_input)
+    st.session_state.messages.append(human_msg)
+
+    # 2) Exibir imediatamente no chat
     st.chat_message("user").write(user_input)
 
-    # construir state de entrada
+    # 3) RE-SANITIZAR para garantir nenhum item inválido
+    sanitize_history()
+
+    # 4) Proteção: se o histórico estiver vazio por algum bug → Pare
+    if len(st.session_state.messages) == 0:
+        st.error("Erro interno: histórico vazio antes de chamar o grafo.")
+        logger.error("ERROR: histórico vazio antes do grafo.")
+        st.stop()
+
+    # 5) Montar o state de entrada
     state_input = {
         "messages": st.session_state.messages,
         "perfil_cliente": perfil_cliente,
     }
 
+    # Proteção: validar state_input
+    if not isinstance(state_input, dict):
+        st.error("State inválido!")
+        logger.error(f"STATE INVÁLIDO: {state_input}")
+        st.stop()
+
+    if "messages" not in state_input or not isinstance(state_input["messages"], list):
+        st.error("State.messages inválido!")
+        logger.error(f"STATE MESSAGES INVALIDO: {state_input}")
+        st.stop()
+
+    # 6) Invocar o grafo
     try:
-
-        logger.error("===== DEBUG STATE_INPUT =====")
-        pprint.pprint({
-            "messages": st.session_state.messages,
-            "perfil_cliente": perfil_cliente,
-        })
-        logger.error("===== END DEBUG =====")
-
-
-
         result = app_graph.invoke(
             state_input,
             config={"configurable": {"thread_id": st.session_state.thread_id}},
@@ -171,14 +188,18 @@ if user_input:
 
         ai_msg = result["messages"][-1]
 
+        # 7) Exibir a resposta
         st.chat_message("assistant").write(ai_msg.content)
+
+        # 8) Salvar no histórico
         st.session_state.messages.append(ai_msg)
 
+        # 9) Tracking Langfuse
         langfuse.generation(
             name="resposta_final",
             model="gpt-4o-mini",
             input=user_input,
-            output=ai_msg.content
+            output=ai_msg.content,
         )
 
     except Exception as e:
