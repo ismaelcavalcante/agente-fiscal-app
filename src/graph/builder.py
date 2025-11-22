@@ -1,6 +1,6 @@
 from langgraph.graph import StateGraph, END
+from graph.router import node_router
 from graph.nodes import (
-    node_router,
     node_rag_qdrant,
     node_web_search,
     node_direct_answer,
