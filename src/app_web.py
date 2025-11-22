@@ -28,8 +28,8 @@ OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
 QDRANT_URL = st.secrets["QDRANT_URL"]
 QDRANT_API_KEY = st.secrets["QDRANT_API_KEY"]
 TAVILY_API_KEY = st.secrets["TAVILY_API_KEY"]
-LANGFUSE_PUBLIC = st.secrets["LANGFUSE_PUBLIC"]
-LANGFUSE_SECRET = st.secrets["LANGFUSE_SECRET"]
+LANGFUSE_PUBLIC_KEY = st.secrets["LANGFUSE_PUBLIC_KEY"]
+LANGFUSE_SECRET_KEY = st.secrets["LANGFUSE_SECRET_KEY"]
 
 # ==============================
 # 📌 PERFIL DO CLIENTE
@@ -83,8 +83,8 @@ web_tool = build_web_tool(TAVILY_API_KEY)
 # 🧠 LANGFUSE (SDK NOVO)
 # ==============================
 langfuse = Langfuse(
-    public_key=LANGFUSE_PUBLIC,
-    secret_key=LANGFUSE_SECRET,
+    public_key=LANGFUSE_PUBLIC_KEY,
+    secret_key=LANGFUSE_SECRET_KEY,
 )
 
 
