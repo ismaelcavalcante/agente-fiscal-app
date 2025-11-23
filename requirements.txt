@@ -1,26 +1,25 @@
-# -------------------------- # CORE # -------------------------- 
 streamlit==1.39.0 
 python-dotenv>=1.0.1 
-requests>=2.32.3
- # -------------------------- # OPENAI + EMBEDDINGS # -------------------------- 
+requests>=2.32.3 
+# OPENAI 
 openai>=1.51.0 
 tiktoken>=0.8.0 
- # -------------------------- # LANGCHAIN ECOSSISTEMA # -------------------------- 
+# LANGCHAIN (VERSÕES COMPATÍVEIS ENTRE SI) 
 langchain==0.3.6 
-langchain-core==0.3.12 
+langchain-core==0.3.16 
 langchain-community==0.3.5 
 langchain-openai==0.2.3 
+# LANGGRAPH 
 langgraph==0.2.43 
-# -------------------------- # QDRANT - VERSÃO OTIMIZADA # -------------------------- 
-# Esta versão funciona em Python 3.13, aceita vector_name="default" # e instala corretamente no Streamlit Cloud via UV 
+# QDRANT (VERSÕES MODERNAS E COMPATÍVEIS COM LANGCHAIN) 
 qdrant-client==1.7.3 
 langchain-qdrant==0.1.2 
-# -------------------------- # BUSCA WEB E TAVILY # -------------------------- 
+# TAVILY 
 tavily-python>=0.3.4 
-# -------------------------- # OBSERVABILIDADE # -------------------------- 
+# OBSERVABILITY 
 langfuse==2.42.0 
-# -------------------------- # Pydantic # -------------------------- 
+# BASE 
 pydantic>=2.9.2 
-# -------------------------- # UV / STREAMLIT CLOUD OPTIMIZATIONS # -------------------------- 
---prefer-binary 
---extra-index-url https://pypi.org/simple
+# STREAMLIT PERFORMANCE 
+--extra-index-url https://pypi.org/simple 
+--prefer-binary
