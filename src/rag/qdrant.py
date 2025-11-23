@@ -28,7 +28,7 @@ class RetrieverWrapper:
         try:
             results = self.client.query_points(
                 collection_name=self.collection,                
-                query_vector=vector,
+                vector_name="default",
                 limit=6,
                 with_payload=False,                
             )
