@@ -19,6 +19,9 @@ class RetrieverWrapper:
 
         vector = self.embeddings.embed_query(enriched)
 
+        logger.error("=== VECTOR ===")
+        logger.error(f"Consulta enriquecida: {vector}")
+
         # ============================================================
         # AQUI ESTÁ A CHAMADA CORRETA PARA SUA COLLECTION
         # ============================================================
