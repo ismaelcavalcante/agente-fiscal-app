@@ -17,11 +17,6 @@ class RetrieverWrapper:
         logger.error("=== DEBUG RAG (manual) ===")
         logger.error(f"Consulta enriquecida: {enriched}")
 
-        vector = self.embeddings.embed_query(enriched)
-
-        logger.error(f"=======VECTOR (10 primeiros): {vector[:10]}")
-
-
         # ============================================================
         # AQUI ESTÁ A CHAMADA CORRETA PARA SUA COLLECTION
         # ============================================================

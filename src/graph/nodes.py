@@ -1,21 +1,15 @@
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from utils.logs import logger
 
-
-# ============================================================
-# NÓ 1 — RAG usando Qdrant
-# ============================================================
 
 def node_rag_qdrant(state, retriever):
     logger.debug("📌 node_rag_qdrant…")
 
-    # Pergunta original salva no início do fluxo
     question = state.get("ultima_pergunta", "")
     perfil = state.get("perfil_cliente", "")
 
     try:
         fontes, contexto = retriever.retrieve_documents(question, perfil)
-
         state["contexto_juridico_bruto"] = contexto or ""
         state["sources_data"] = fontes or []
         state["rag_ok"] = bool(contexto.strip())
@@ -30,19 +24,13 @@ def node_rag_qdrant(state, retriever):
         return state
 
 
-# ============================================================
-# NÓ 2 — Web Search (fallback)
-# ============================================================
-
 def node_web_search(state, web_tool):
     logger.debug("📌 node_web_search…")
 
-    # Se já temos contexto do RAG, não faz fallback
     if state.get("rag_ok"):
         return state
 
     question = state.get("ultima_pergunta", "")
-
     result = web_tool.invoke({"query": question})
 
     state["contexto_juridico_bruto"] = result.get("answer", "")
@@ -51,10 +39,6 @@ def node_web_search(state, web_tool):
 
     return state
 
-
-# ============================================================
-# NÓ 3 — Resposta final do LLM (único responsável por responder)
-# ============================================================
 
 def node_generate_final(state, llm):
     logger.debug("📌 node_generate_final…")
@@ -76,14 +60,7 @@ Regras:
 
     resposta = llm.invoke([
         SystemMessage(content=system_prompt),
-        HumanMessage(
-            content=(
-                f"PERGUNTA DO CLIENTE:\n{question}\n\n"
-                f"PERFIL DO CLIENTE:\n{perfil}\n\n"
-                f"CONTEXTO DO RAG:\n{contexto}\n\n"
-                f"FONTES:\n{fontes}"
-            )
-        )
+        HumanMessage(content=f"PERGUNTA:\n{question}\n\nPERFIL:\n{perfil}\n\nCONTEXTO RAG:\n{contexto}\n\nFONTES:\n{fontes}")
     ])
 
     state["messages"].append(AIMessage(content=resposta.content))

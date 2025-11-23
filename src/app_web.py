@@ -154,29 +154,32 @@ user_input = st.chat_input("Digite sua pergunta tributária...")
 # ===========================
 if user_input:
 
-    # 1) Sempre adicionar a mensagem AO HISTÓRICO antes de tudo
+    # 1) Adicionar ao histórico
     human_msg = HumanMessage(content=user_input)
     st.session_state.messages.append(human_msg)
 
-    # 2) Exibir imediatamente no chat
+    # 2) Exibir imediatamente
     st.chat_message("user").write(user_input)
 
-    # 3) RE-SANITIZAR para garantir nenhum item inválido
+    # 3) Garantir saneamento
     sanitize_history()
 
-    # 4) Proteção: se o histórico estiver vazio por algum bug → Pare
+    # 4) Verificação básica
     if len(st.session_state.messages) == 0:
         st.error("Erro interno: histórico vazio antes de chamar o grafo.")
         logger.error("ERROR: histórico vazio antes do grafo.")
         st.stop()
 
-    # 5) Montar o state de entrada
+    # 5) Criar o state input CORRETO
     state_input = {
         "messages": st.session_state.messages,
         "perfil_cliente": perfil_cliente,
+
+        # 🚀 ***CORREÇÃO CRÍTICA***
+        "ultima_pergunta": user_input,
     }
 
-    # Proteção: validar state_input
+    # 6) Validar state
     if not isinstance(state_input, dict):
         st.error("State inválido!")
         logger.error(f"STATE INVÁLIDO: {state_input}")
@@ -187,7 +190,7 @@ if user_input:
         logger.error(f"STATE MESSAGES INVALIDO: {state_input}")
         st.stop()
 
-    # 6) Invocar o grafo
+    # 7) Invocar grafo
     try:
         result = app_graph.invoke(
             state_input,
@@ -196,13 +199,13 @@ if user_input:
 
         ai_msg = result["messages"][-1]
 
-        # 7) Exibir a resposta
+        # 8) Exibir resposta
         st.chat_message("assistant").write(ai_msg.content)
 
-        # 8) Salvar no histórico
+        # 9) Salvar no histórico
         st.session_state.messages.append(ai_msg)
 
-        # 9) Tracking Langfuse
+        # 10) Tracking Langfuse
         langfuse.generation(
             name="resposta_final",
             model="gpt-4o-mini",
