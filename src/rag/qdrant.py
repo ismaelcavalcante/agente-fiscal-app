@@ -19,7 +19,7 @@ class RetrieverWrapper:
 
         vector = self.embeddings.embed_query(enriched)
 
-        logger.critical(f"=======VECTOR (10 primeiros): {vector[:10]}")
+        logger.error(f"=======VECTOR (10 primeiros): {vector[:10]}")
 
 
         # ============================================================
