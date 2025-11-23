@@ -26,7 +26,7 @@ class RetrieverWrapper:
             results = self.client.query_points(
                 collection_name=self.collection,         
                 limit=6,
-                with_payload=False,                
+                with_payload=True,                
             )
         except Exception as e:
             logger.error(f"[RAG_QDRANT] Erro: {e}")
