@@ -1,32 +1,15 @@
-from langgraph.graph import StateGraph, END
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from utils.logs import logger
 
 
-# ==============================
-# ESTADO GLOBAL DO GRAPH
-# ==============================
-
-def initial_state(pergunta, perfil):
-    return {
-        "messages": [HumanMessage(content=pergunta)],
-        "ultima_pergunta": pergunta,
-        "perfil_cliente": perfil,
-
-        # preenchidos durante a execução
-        "contexto_juridico_bruto": "",
-        "sources_data": [],
-        "rag_ok": False,
-    }
-
-
-# ==============================
-# NÓ 1 — RAG COM QDRANT
-# ==============================
+# ============================================================
+# NÓ 1 — RAG usando Qdrant
+# ============================================================
 
 def node_rag_qdrant(state, retriever):
     logger.debug("📌 node_rag_qdrant…")
 
+    # Pergunta original salva no início do fluxo
     question = state.get("ultima_pergunta", "")
     perfil = state.get("perfil_cliente", "")
 
@@ -47,18 +30,19 @@ def node_rag_qdrant(state, retriever):
         return state
 
 
-# ==============================
-# NÓ 2 — WEB SEARCH FALLBACK
-# ==============================
+# ============================================================
+# NÓ 2 — Web Search (fallback)
+# ============================================================
 
 def node_web_search(state, web_tool):
     logger.debug("📌 node_web_search…")
 
-    # Se o RAG funcionou, não faz fallback
+    # Se já temos contexto do RAG, não faz fallback
     if state.get("rag_ok"):
         return state
 
     question = state.get("ultima_pergunta", "")
+
     result = web_tool.invoke({"query": question})
 
     state["contexto_juridico_bruto"] = result.get("answer", "")
@@ -68,9 +52,9 @@ def node_web_search(state, web_tool):
     return state
 
 
-# ==============================
-# NÓ 3 — GERAÇÃO FINAL DO LLM
-# ==============================
+# ============================================================
+# NÓ 3 — Resposta final do LLM (único responsável por responder)
+# ============================================================
 
 def node_generate_final(state, llm):
     logger.debug("📌 node_generate_final…")
@@ -91,12 +75,12 @@ Regras:
 """
 
     resposta = llm.invoke([
+        SystemMessage(content=system_prompt),
         HumanMessage(
             content=(
-                f"{system_prompt}\n\n"
                 f"PERGUNTA DO CLIENTE:\n{question}\n\n"
                 f"PERFIL DO CLIENTE:\n{perfil}\n\n"
-                f"CONTEXTO LEGAL DO RAG:\n{contexto}\n\n"
+                f"CONTEXTO DO RAG:\n{contexto}\n\n"
                 f"FONTES:\n{fontes}"
             )
         )
@@ -104,35 +88,3 @@ Regras:
 
     state["messages"].append(AIMessage(content=resposta.content))
     return state
-
-
-# ==============================
-# CONSTRUÇÃO DO GRAFO
-# ==============================
-
-def create_graph(retriever, web_tool, llm):
-    graph = StateGraph(dict)
-
-    graph.add_node("rag", lambda s: node_rag_qdrant(s, retriever))
-    graph.add_node("web", lambda s: node_web_search(s, web_tool))
-    graph.add_node("final", lambda s: node_generate_final(s, llm))
-
-    graph.set_entry_point("rag")
-
-    graph.add_edge("rag", "web")
-    graph.add_edge("web", "final")
-
-    graph.set_finish_point("final")
-
-    return graph.compile()
-
-
-# ==============================
-# EXECUÇÃO (EXEMPLO)
-# ==============================
-
-def executar_fluxo(pergunta, perfil, retriever, web_tool, llm):
-    state = initial_state(pergunta, perfil)
-    graph = create_graph(retriever, web_tool, llm)
-    result = graph.invoke(state)
-    return result["messages"][-1].content
