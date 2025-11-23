@@ -1,6 +1,10 @@
 import qdrant_client
-print("MODULO CARREGADO:", qdrant_client)
-print("LOCAL ONDE FOI CARREGADO:", qdrant_client.__file__)
+from utils.logs import logger
+
+logger.error("====================================================================")
+logger.error("MODULO CARREGADO: {qdrant_client}")
+logger.error(f"LOCAL ONDE FOI CARREGADO: {qdrant_client.__file__}")
+logger.error("====================================================================")
 
 import streamlit as st
 from langchain_openai import ChatOpenAI
