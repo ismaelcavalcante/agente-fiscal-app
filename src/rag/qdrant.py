@@ -19,6 +19,9 @@ class RetrieverWrapper:
 
         vector = self.embeddings.embed_query(enriched)
 
+        logger.critical(f"=======VECTOR (10 primeiros): {vector[:10]}")
+
+
         # ============================================================
         # AQUI ESTÁ A CHAMADA CORRETA PARA SUA COLLECTION
         # ============================================================
@@ -33,8 +36,6 @@ class RetrieverWrapper:
             raise
 
         docs = results.points
-
-        logger.error(f"ESSE É O VECTOR: {vector.payload}")
 
         logger.error("Payload debug:")
 
