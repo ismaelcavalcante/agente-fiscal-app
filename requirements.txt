@@ -20,6 +20,3 @@ tavily-python>=0.3.4
 langfuse==2.42.0 
 # BASE 
 pydantic>=2.9.2 
-# STREAMLIT PERFORMANCE 
---extra-index-url https://pypi.org/simple 
---prefer-binary
