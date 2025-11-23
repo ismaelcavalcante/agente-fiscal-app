@@ -23,7 +23,7 @@ class RetrieverWrapper:
         # AQUI ESTÁ A CHAMADA CORRETA PARA SUA COLLECTION
         # ============================================================
         try:
-            results = self.client.search_points(
+            results = self.client.query_points(
                 collection_name=self.collection,
                 query=vector,
                 vector_name="default",
