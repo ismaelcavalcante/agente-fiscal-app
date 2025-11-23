@@ -34,7 +34,7 @@ class RetrieverWrapper:
 
         docs = results.points
 
-        logger.error(f"ESSE É O VECTOR: {vector}")
+        logger.error(f"ESSE É O VECTOR: {vector.payload}")
 
         logger.error("Payload debug:")
 
