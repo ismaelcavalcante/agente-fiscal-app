@@ -33,6 +33,13 @@ class RetrieverWrapper:
             raise
 
         docs = results.points
+
+        logger.error("Payload debug:")
+
+        for i, p in enumerate(docs):
+            logger.error(f"[POINT {i} PAYLOAD] {p.payload}")
+
+
         logger.error(f"Docs retornados: {len(docs)}")
 
         metadata = []
