@@ -12,7 +12,7 @@ langchain-openai==0.2.3
 # LANGGRAPH 
 langgraph==0.2.43 
 # QDRANT (VERSÕES MODERNAS E COMPATÍVEIS COM LANGCHAIN) 
-qdrant-client==1.7.3
+qdrant-client==1.11.1
 # TAVILY 
 tavily-python>=0.3.4 
 # OBSERVABILITY 
