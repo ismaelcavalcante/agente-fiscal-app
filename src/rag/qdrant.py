@@ -23,12 +23,10 @@ class RetrieverWrapper:
         # AQUI ESTÁ A CHAMADA CORRETA PARA SUA COLLECTION
         # ============================================================
         try:
-            results = self.client.search_points(
+            results = self.client.search(
                 collection_name=self.collection,
-                query=vector,
-                vector_name="default",
-                limit=6,
-                search_params=SearchParams(hnsw_ef=128)
+                query_vector=vector,
+                limit=6
             )
         except Exception as e:
             logger.error(f"[RAG_QDRANT] Erro: {e}")
