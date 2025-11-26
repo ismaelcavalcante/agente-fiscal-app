@@ -1,36 +1,32 @@
-import qdrant_client
-from utils.logs import logger
-
-logger.error("====================================================================")
-logger.error("MODULO CARREGADO: {qdrant_client}")
-logger.error(f"LOCAL ONDE FOI CARREGADO: {qdrant_client.__file__}")
-logger.error("====================================================================")
+# app_web.py
 
 import streamlit as st
 from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+
+from utils.logs import logger
+from rag.pipeline import HybridRAGPipeline
+from rag.qdrant import QdrantRetriever
+from rag.web import WebSearch
+from graph.builder import build_graph
+
 from langfuse import Langfuse
 
+# Components UI
 from components.perfil_select import selecionar_perfil
 from components.perfil_form import editar_perfil_form
 from components.perfil_upload import upload_perfil_json
 
-from graph.builder import build_graph
-from rag.qdrant import build_retriever
-from rag.web import build_web_tool
-from utils.logs import logger
-
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
-
 
 # ===========================
-# Streamlit Config
+# Config Streamlit
 # ===========================
 st.set_page_config(page_title="Consultor Fiscal IA", page_icon="💼")
 st.title("💼 Assistente Fiscal Inteligente")
 
 
 # ===========================
-# Perfis no SessionState
+# Sessão: Perfis
 # ===========================
 if "perfis" not in st.session_state:
     st.session_state.perfis = {}
@@ -51,7 +47,7 @@ with st.sidebar:
 
 
 # ===========================
-# Bloquear se não houver perfil selecionado
+# Bloquear fluxo sem perfil
 # ===========================
 if not st.session_state.perfil_ativo:
     st.warning("Selecione ou crie um perfil na lateral para começar.")
@@ -61,7 +57,7 @@ perfil_cliente = st.session_state.perfis[st.session_state.perfil_ativo]
 
 
 # ===========================
-# Histórico no SessionState
+# Histórico
 # ===========================
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -70,26 +66,20 @@ if "thread_id" not in st.session_state:
     st.session_state.thread_id = "thread-1"
 
 
-# ===========================
-# Sanitização do histórico
-# ===========================
 def sanitize_history():
-    fixed = []
+    """Converte manualmente mensagens soltas em objetos HumanMessage/AIMessage."""
+    msgs = []
     for msg in st.session_state.messages:
         if isinstance(msg, BaseMessage):
-            fixed.append(msg)
-        elif isinstance(msg, dict):
+            msgs.append(msg)
+        elif isinstance(msg, dict):  # fallback caso algo tenha vindo em formato sujo
             role = msg.get("role", "user")
             content = msg.get("content", "")
             if role == "assistant":
-                fixed.append(AIMessage(content=content))
+                msgs.append(AIMessage(content=content))
             else:
-                fixed.append(HumanMessage(content=content))
-        else:
-            # qualquer outra coisa -> descartamos
-            continue
-
-    st.session_state.messages = fixed
+                msgs.append(HumanMessage(content=content))
+    st.session_state.messages = msgs
 
 
 sanitize_history()
@@ -101,14 +91,14 @@ sanitize_history()
 llm = ChatOpenAI(
     model="gpt-4o-mini",
     api_key=st.secrets["OPENAI_API_KEY"],
-    temperature=0.15
+    temperature=0.1
 )
 
 
 # ===========================
-# RAG e Web Search
+# Inicializar RAG Híbrido
 # ===========================
-retriever = build_retriever(
+retriever = QdrantRetriever(
     url=st.secrets["QDRANT_URL"],
     api_key=st.secrets["QDRANT_API_KEY"],
     collection="leis_fiscais_v1",
@@ -116,11 +106,22 @@ retriever = build_retriever(
     openai_key=st.secrets["OPENAI_API_KEY"],
 )
 
-web_tool = build_web_tool(st.secrets["TAVILY_API_KEY"])
+rag_pipeline = HybridRAGPipeline(
+    qdrant_retriever=retriever,
+    llm=llm,
+    vector_top_k=6,
+    final_top_k=4,
+)
 
 
 # ===========================
-# Langfuse
+# Inicializar Web Search
+# ===========================
+web_tool = WebSearch(api_key=st.secrets["TAVILY_API_KEY"])
+
+
+# ===========================
+# Inicializar Langfuse
 # ===========================
 langfuse = Langfuse(
     public_key=st.secrets["LANGFUSE_PUBLIC_KEY"],
@@ -129,13 +130,13 @@ langfuse = Langfuse(
 
 
 # ===========================
-# Grafo
+# Construir Grafo
 # ===========================
-app_graph = build_graph(llm, retriever, web_tool)
+app_graph = build_graph(llm=llm, retriever=rag_pipeline, web_tool=web_tool)
 
 
 # ===========================
-# Exibir histórico no chat
+# Exibir histórico
 # ===========================
 for msg in st.session_state.messages:
     role = "assistant" if isinstance(msg, AIMessage) else "user"
@@ -150,62 +151,42 @@ user_input = st.chat_input("Digite sua pergunta tributária...")
 
 
 # ===========================
-# Execução do fluxo
+# Pipeline de execução
 # ===========================
 if user_input:
-
-    # 1) Adicionar ao histórico
+    # 1) registrar mensagem
     human_msg = HumanMessage(content=user_input)
     st.session_state.messages.append(human_msg)
-
-    # 2) Exibir imediatamente
     st.chat_message("user").write(user_input)
 
-    # 3) Garantir saneamento
     sanitize_history()
 
-    # 4) Verificação básica
-    if len(st.session_state.messages) == 0:
-        st.error("Erro interno: histórico vazio antes de chamar o grafo.")
-        logger.error("ERROR: histórico vazio antes do grafo.")
-        st.stop()
-
-    # 5) Criar o state input CORRETO
-    state_input = {
-        "messages": st.session_state.messages,
+    # 2) state inicial para LangGraph
+    state = {
+        "messages": list(st.session_state.messages),  # imutável
         "perfil_cliente": perfil_cliente,
-
-        # 🚀 ***CORREÇÃO CRÍTICA***
         "ultima_pergunta": user_input,
     }
 
-    # 6) Validar state
-    if not isinstance(state_input, dict):
-        st.error("State inválido!")
-        logger.error(f"STATE INVÁLIDO: {state_input}")
-        st.stop()
-
-    if "messages" not in state_input or not isinstance(state_input["messages"], list):
-        st.error("State.messages inválido!")
-        logger.error(f"STATE MESSAGES INVALIDO: {state_input}")
-        st.stop()
-
-    # 7) Invocar grafo
+    # 3) Execução segura do grafo
     try:
         result = app_graph.invoke(
-            state_input,
+            state,
             config={"configurable": {"thread_id": st.session_state.thread_id}},
         )
 
-        ai_msg = result["messages"][-1]
+        msgs = result.get("messages", [])
+        if not msgs:
+            st.error("Nenhuma resposta foi gerada pelo grafo.")
+            logger.error("Grafo retornou messages vazio!")
+            st.stop()
 
-        # 8) Exibir resposta
+        ai_msg = msgs[-1]
+
         st.chat_message("assistant").write(ai_msg.content)
-
-        # 9) Salvar no histórico
         st.session_state.messages.append(ai_msg)
 
-        # 10) Tracking Langfuse
+        # 4) Log no Langfuse
         langfuse.generation(
             name="resposta_final",
             model="gpt-4o-mini",
@@ -214,5 +195,5 @@ if user_input:
         )
 
     except Exception as e:
-        logger.error(f"Erro no fluxo: {e}")
-        st.error("Erro durante o processamento. Veja os logs.")
+        logger.error(f"Erro ao executar grafo: {e}")
+        st.error("Erro interno ao processar sua pergunta.")

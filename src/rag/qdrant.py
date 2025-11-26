@@ -4,59 +4,44 @@ from langchain_openai import OpenAIEmbeddings
 from utils.logs import logger
 
 
-class RetrieverWrapper:
+class QdrantRetriever:
 
-    def __init__(self, client, embeddings, collection):
-        self.client = client
-        self.embeddings = embeddings
+    def __init__(self, url, api_key, collection, embedding_model, openai_key):
+        self.client = QdrantClient(url=url, api_key=api_key)
+        self.embeddings = OpenAIEmbeddings(model=embedding_model, api_key=openai_key)
         self.collection = collection
 
-    def retrieve_documents(self, query, perfil):
+    def embed_query(self, text: str):
+        return self.embeddings.embed_query(text)
 
-        enriched = f"{query}\n\nPerfil:{perfil}"
-        logger.error("=== DEBUG RAG (manual) ===")
-        logger.error(f"Consulta enriquecida: {enriched}")
+    def query(self, text: str, perfil: str, limit=12):
+        enriched = f"{text}\n\nPerfil: {perfil}"
+        logger.info("🔎 Gerando embedding para RAG...")
+        query_vector = self.embed_query(enriched)
 
-        # ============================================================
-        # AQUI ESTÁ A CHAMADA CORRETA PARA SUA COLLECTION
-        # ============================================================
         try:
-            results = self.client.query_points(
-                collection_name=self.collection,         
-                limit=6,
-                with_payload=True,                
+            results = self.client.search(
+                collection_name=self.collection,
+                query_vector=query_vector,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+                search_params=SearchParams(hnsw_ef=128, exact=False),
             )
         except Exception as e:
-            logger.error(f"[RAG_QDRANT] Erro: {e}")
+            logger.error(f"[RAG] Erro ao consultar Qdrant: {e}")
             raise
 
-        docs = results.points
+        docs = []
+        for i, point in enumerate(results):
+            payload = point.payload or {}
+            text = payload.get("page_content", "") or ""
 
-        logger.error("Payload debug:")
+            docs.append({
+                "index": i,
+                "page_content": text,
+                "metadata": payload,
+            })
 
-        for i, p in enumerate(docs):
-            logger.error(f"[POINT {i} PAYLOAD] {p.payload}")
-
-
-        logger.error(f"Docs retornados: {len(docs)}")
-
-        metadata = []
-        contexto = []
-
-        for i, p in enumerate(docs):
-            payload = p.payload or {}
-            text = payload.get("page_content", "")
-            logger.error(f"[DOC {i}] {text[:200]}")
-            metadata.append(payload)
-            contexto.append(text)
-
-        return metadata, "\n\n".join(contexto)
-
-
-def build_retriever(url, api_key, collection, embedding_model, openai_key):
-    logger.info("Inicializando retriever Qdrant...")
-
-    client = QdrantClient(url=url, api_key=api_key)
-    embeddings = OpenAIEmbeddings(model=embedding_model, api_key=openai_key)
-
-    return RetrieverWrapper(client, embeddings, collection)
+        logger.info(f"🔎 Qdrant retornou {len(docs)} documentos (pré‑reranking).")
+        return docs

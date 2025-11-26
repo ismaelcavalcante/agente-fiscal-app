@@ -1,1 +1,52 @@
-# agente-fiscal-app
+# 💼 Consultor Fiscal Inteligente (RAG + Web Search + LangGraph + MCP)
+
+Este projeto implementa um Assistente Fiscal avançado, combinando:
+
+- Recuperação Híbrida (Qdrant + Reranking Vetorial + LLM-as-Judge)
+- Web Search (Tavily)
+- LangGraph (roteamento + orquestração inteligente)
+- Model Context Protocol (MCP)
+- Prompts Hierárquicos (SOP)
+- Streamlit UI
+- Langfuse para auditoria
+- Testes completos (pytest)
+
+---
+
+# 🧠 Arquitetura Geral
+
+Pipeline completo:
+Pergunta ↓ Router (LangGraph) ↓ ────────────────────────────────────────────────────────────────── │ Se pedido jurídico │ Se pedido de pesquisa/dados atuais │ │ (IBS, ICMS, LC 214...) → │ (pesquise, notícia, busque...) → │ │ ↓ │ RAG Pipeline: Web Search (Tavily) │ Qdrant ↓ │ → Reranking Vetorial ↓ │ → LLM-as-Judge ↓ ────────────────────────────────────────────────────────────────── ↓ CONTEXTO FINAL ↓ node_generate_final (MCP) ↓ LLM Final ↓ Resposta
+
+--- # 🚀 Tecnologias - **Python 3.10+** - **LangGraph** - **LangChain** - **OpenAI GPT-4o-mini** - **Sentence Transformers (CrossEncoder)** - **Qdrant Cloud** - **Tavily Search** - **Streamlit** - **PyTest** - **Pydantic v2 (Model Context Protocol)** --- # 
+
+📁 Estrutura do Projeto
+project/ app_web.py graph/ builder.py nodes.py router.py rag/ qdrant.py rerank_vector.py rerank_llm.py pipeline.py web.py prompts/ system_base.txt tax_rules.txt format_output.json hierarchy.py protocol.py mcp_converters.py tests/ test_rag_*.py test_web.py test_nodes.py test_graph.py test_prompts.py test_mcp.py helpers/ fake_streamlit.py fake_graph.py
+
+--- # 🧩 Componentes principais ## 1. 🔎 RAG Híbrido - Qdrant → top‑12 - Reranking Vetorial (CrossEncoder MiniLM) - Reranking LLM‑as‑Judge - Seleção final top‑4 ## 2. 🌐 Web Search - Tavily - Normalização de snippet + content - Formatado para LangGraph ## 3. 🔗 LangGraph - Router robusto (regex jurídica) - Nodes reorganizados - Geração final isolada ## 4. 📘 MCP (Model Context Protocol) - Perfil do cliente - Pergunta - Conteúdo jurídico - Fontes detalhadas - Prompt mestre SOP - Auditoria total ## 5. 🧠 Prompts Hierárquicos SOP - System - Objetivo - Regras - Perfil - Pergunta - Contexto - Fontes - Formato --- # 🧪 Testes O projeto possui cobertura completa: - Testes de RAG - Testes de Web Search - Testes de Grafo - Testes de Prompt - Testes MCP - Testes de estado e fluxos Rodar:
+pytest -s
+
+--- # 🏗 Como rodar localmente ### 1. Crie um venv
+python -m venv .venv source .venv/bin/activate
+
+### 2. Instale dependências
+pip install -r requirements.txt
+
+### 3. Configure secrets no `.streamlit/secrets.toml`:
+OPENAI_API_KEY="..." QDRANT_URL="..." QDRANT_API_KEY="..." TAVILY_API_KEY="..." LANGFUSE_PUBLIC_KEY="..." LANGFUSE_SECRET_KEY="..."
+
+### 4. Rode o app
+streamlit run app_web.py
+
+--- # 🧭 Roadmap - [+] RAG híbrido - [+] MCP - [+] Prompts SOP - [+] Testes completos - [ ] Fine-tuning de embeddings tributárias - [ ] A/B testing de prompts - [ ] Suporte multi-perfil simultâneo - [ ] Dashboard de auditoria com Langfuse --- # 📄 Licença MIT License.
+
+📐 1) Arquitetura Geral do Sistema (Visão Macro)
+┌───────────────────────────┐ │ Usuário │ │ (Pergunta Tributária) │ └─────────────┬─────────────┘ │ ▼ ┌─────────────────────┐ │ Streamlit │ │ app_web.py │ └──────────┬──────────┘ │ Cria State │ Envia histórico ▼ ┌──────────────────────────┐ │ LangGraph │ │ (build_graph) │ └───────┬─────────┬────────┘ │ │ │ │ ▼ ▼ ┌────────────┐ ┌───────────────────┐ │ Router │ │ node_web_search │ └─────┬──────┘ └───────────────────┘ │ ┌─────────┴──────────┐ │ node_rag_qdrant │ └─────────┬──────────┘ │ ▼ ┌────────────────────────────┐ │ HybridRAGPipeline │ │ Qdrant → VectorReranker │ │ → LLM-as-Judge │ └───────────┬──────────────┘ │ ▼ ┌─────────────────────────┐ │ node_generate_final │ │ (MCP + Prompt) │ └───────────┬─────────────┘ │ ▼ ┌──────────────────────┐ │ ChatOpenAI │ │ Geração da Resposta │ └──────────┬───────────┘ │ ▼ ┌────────────────────────┐ │ Streamlit Interface │ │ (Exibe a resposta) │ └────────────────────────┘
+📐 2) Fluxo RAG Híbrido (Detalhado)
+┌──────────────────────────────────────────┐ │ HybridRAGPipeline.run(pergunta, perfil) │ └──────────────────────────────────────────┘ │ ▼ ┌──────────────────────────┐ │ QdrantRetriever │ │ - gera embedding │ │ - busca top-12 │ └─────────────┬────────────┘ │ docs (12) ▼ ┌───────────────────────────┐ │ VectorReranker │ │ Cross-Encoder (miniLM) │ │ reranking semântico │ └─────────────┬─────────────┘ │ docs (top-6) ▼ ┌────────────────────────────────┐ │ LLMJudgeReranker │ │ - LLM avalia relevância │ │ - rankeia por score jurídico │ └──────────────┬─────────────────┘ │ docs (top-4) ▼ ┌───────────────────────┐ │ Merge final (texto) │ └───────────────────────┘
+📐 3) MCP – Model Context Protocol (como a resposta é construída)
+┌────────────────────────────────────────┐ │ node_generate_final │ └────────────────────────────────────────┘ │ ▼ ┌───────────────────────────┐ │ Converte fontes (RAG/Web) │ └───────────────┬──────────┘ │ ▼ ┌──────────────────────────────┐ │ Monta Prompt Hierárquico │ └──────────────┬──────────────┘ │ ▼ ┌──────────────────────────────────┐ │ Cria objeto MCP (ConsultaContext) │ │ trace_id │ │ perfil_cliente │ │ pergunta_cliente │ │ contexto_juridico_bruto │ │ fontes_detalhadas │ │ prompt_mestre │ └──────────────────┬────────────────┘ │ ▼ ┌──────────────────┐ │ ChatOpenAI │ │ System + Human │ └───┬──────────────┘ │ ▼ ┌────────────────────────┐ │ Resposta Final (LLM) │ └────────────────────────┘
+📐 4) Diagrama do Router Jurídico (decisão RAG vs WEB)
+┌─────────────────────────┐ │ node_router(state) │ └───────────┬────────────┘ │ Avalia padrão jurídico? (IBS, CBS, ICMS, ST, etc) │ ┌────────────────┴─────────────┐ │ │ ▼ ▼ ┌────────────┐ ┌────────────────┐ │ RAG │ │ WEB │ │ (consulta) │ │ (fallback) │ └──────┬──────┘ └────────┬───────┘ │ │ ▼ ▼ ┌────────────────────────────┐ ┌────────────────────────────┐ │ node_rag_qdrant → HybridRAG │ │ node_web_search → Tavily │ └──────────────┬─────────────┘ └──────────────┬────────────┘ │ │ ▼ ▼ ┌───────────────────┐ ┌───────────────────┐ │ contexto + fontes │ │ contexto + fontes │ └───────────┬──────┘ └──────────┬────────┘ │ │ ▼ ▼ ┌────────────────────────────────────────────┐ │ node_generate_final │ └────────────────────────────────────────────┘
+📐 5) Fluxo completo do aplicativo (Do input ao output)
+[Usuário] │ ▼ Streamlit (chat_input) │ cria state ▼ LangGraph.invoke(state) │ ▼ node_router │────────→ "WEB"? → node_web_search → contexto │ └────────→ "RAG"? → node_rag_qdrant → HybridRAGPipeline → contexto │ ▼ contexto + fontes │ ▼ node_generate_final │ ▼ ChatOpenAI (LLM) │ ▼ resposta final → adicionada ao histórico Streamlit

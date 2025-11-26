@@ -1,51 +1,45 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Union
 
 
 class FonteDocumento(BaseModel):
     """
-    Metadados de cada fonte usada no contexto jurídico final.
+    Metadados padronizados para qualquer fonte utilizada pelo sistema.
     """
-    document_source: str = Field(..., description="Nome da fonte (EC 132, LC 214, Web Search, etc.)")
-    page_number: Optional[int] = Field(None, description="Número da página quando aplicável.")
-    chunk_index: Optional[int] = Field(None, description="Índice/número do chunk no documento.")
-    document_type: str = Field(..., description="Tipo de documento (LEI, EMENDA, WEB).")
+    document_source: str = Field(..., description="Nome da fonte (LC 214/2024, EC 132/2023, WEB, etc.)")
+    document_type: str = Field(..., description="Tipo (LEI, WEB, RAG, FIXED_RULE).")
+    chunk_index: Optional[int] = None
+    page_number: Optional[int] = None
+    url: Optional[str] = None
 
 
 class ConsultaContext(BaseModel):
     """
-    Model Context Protocol (MCP) – encapsula todo o contexto usado para gerar a resposta final.
+    MCP — Model Context Protocol.
+    Estrutura completa enviada ao gerador final.
     """
 
-    # IDENTIDADE E GOVERNANÇA
+    # Governança / rastreamento
     trace_id: Optional[str] = Field(
-        None,
-        description="ID de rastreamento do LangGraph/Langfuse (útil para auditoria)."
+        None, description="ID de rastreamento (LangGraph / Langfuse)"
     )
 
-    perfil_cliente: str = Field(
-        ...,
-        description="Perfil do cliente. Pode incluir regime, CNAE, porte, UF etc."
+    # Identidade
+    perfil_cliente: Union[str, dict] = Field(
+        ..., description="Perfil do cliente (estrutura livre: CNAE, regime, UF etc.)"
     )
+    pergunta_cliente: str = Field(..., description="Pergunta original do usuário.")
 
-    pergunta_cliente: str = Field(
-        ...,
-        description="Pergunta original feita pelo usuário."
-    )
-
-    # CONHECIMENTO
+    # Conhecimento
     contexto_juridico_bruto: str = Field(
         ...,
-        description="Texto jurídico bruto recuperado pelo RAG (Qdrant/Web/Regras Fixas)."
+        description="Texto bruto consolidado do RAG, WebSearch ou Regras Fixas."
     )
-
     fontes_detalhadas: List[FonteDocumento] = Field(
-        ...,
-        description="Lista de metadados das fontes utilizadas."
+        ..., description="Lista padronizada de metadados das fontes utilizadas."
     )
 
-    # GOVERNANÇA DO PROMPT
+    # Governança de prompt
     prompt_mestre: str = Field(
-        ...,
-        description="O system prompt final usado para gerar a resposta."
+        ..., description="Prompt final usado para gerar a resposta."
     )

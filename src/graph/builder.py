@@ -1,34 +1,42 @@
 from langgraph.graph import StateGraph, END
+from typing import TypedDict, Any
+from functools import partial
+
 from graph.router import node_router
-from graph.nodes import (
-    node_rag_qdrant,
-    node_web_search,
-    node_generate_final,
-)
+from graph.nodes import node_rag_qdrant, node_web_search, node_generate_final
 from utils.logs import logger
 
-state_schema = dict
+
+class GraphState(TypedDict, total=False):
+    messages: list
+    ultima_pergunta: str
+    perfil_cliente: Any
+    contexto_juridico_bruto: str
+    sources_data: list
+    rag_ok: bool
+    __route__: str
 
 
-def build_graph(llm, retriever, web_tool):
-    logger.info("⛓️  Construindo LangGraph (versão profissional)...")
+def build_graph(llm, rag_pipeline, web_tool):
+    """
+    Constrói o grafo principal da aplicação.
+    """
 
-    workflow = StateGraph(state_schema)
+    logger.info("⚙️ Construindo LangGraph...")
+
+    workflow = StateGraph(GraphState)
 
     workflow.add_node("router", node_router)
-    workflow.add_node("rag_qdrant", lambda s: node_rag_qdrant(s, retriever))
-    workflow.add_node("web_search", lambda s: node_web_search(s, web_tool))
-    workflow.add_node("generate_final", lambda s: node_generate_final(s, llm))
+    workflow.add_node("rag_qdrant", partial(node_rag_qdrant, retriever=rag_pipeline))
+    workflow.add_node("web_search", partial(node_web_search, web_tool=web_tool))
+    workflow.add_node("generate_final", partial(node_generate_final, llm=llm))
 
     workflow.set_entry_point("router")
 
     workflow.add_conditional_edges(
         "router",
-        lambda state: state["__route__"],
-        {
-            "RAG": "rag_qdrant",
-            "WEB": "web_search",
-        }
+        lambda s: s.get("__route__", "RAG"),
+        {"RAG": "rag_qdrant", "WEB": "web_search"},
     )
 
     workflow.add_edge("rag_qdrant", "generate_final")
@@ -36,6 +44,5 @@ def build_graph(llm, retriever, web_tool):
     workflow.add_edge("generate_final", END)
 
     graph = workflow.compile()
-    logger.info("🧠 Grafo compilado com sucesso.")
-
+    logger.info("🧠 LangGraph compilado com sucesso.")
     return graph

@@ -2,59 +2,72 @@ from langchain_community.tools.tavily_search import TavilySearchResults
 from utils.logs import logger
 
 
-def build_web_tool(tavily_api_key: str) -> TavilySearchResults:
-    """
-    Inicializa o cliente Tavily com número reduzido de resultados
-    para melhor performance no Streamlit Cloud.
-    """
-    try:
-        tool = TavilySearchResults(
-            max_results=3,
-            api_key=tavily_api_key
-        )
-        logger.info("Tavily Web Search iniciado com sucesso.")
-        return tool
-    except Exception as e:
-        logger.error(f"Erro ao inicializar Tavily: {e}")
-        raise
+class WebSearch:
 
+    def __init__(self, api_key: str, max_results: int = 3):
+        """
+        Inicializa wrapper para Tavily.
+        """
+        try:
+            self.tool = TavilySearchResults(
+                api_key=api_key,
+                max_results=max_results
+            )
+            logger.info("🌐 Tavily WebSearch inicializado.")
+        except Exception as e:
+            logger.error(f"Erro ao inicializar Tavily: {e}")
+            raise
 
-def execute_web_search(tool: TavilySearchResults, query: str) -> tuple[list, str]:
-    """
-    Executa busca na Web com fallback silencioso.
-    Retorna:
-        - lista de documentos
-        - contexto formatado para LLM
-    """
-    try:
-        results = tool.invoke(query)
+    def execute(self, query: str) -> dict:
+        """
+        Executa busca e retorna:
+        {
+          "answer": "texto concatenado",
+          "sources": [ { ... }, ... ]
+        }
+        """
+        try:
+            # Formato correto para tools LangChain: dict(query=foo)
+            results = self.tool.invoke({"query": query}) or []
+        except Exception as e:
+            logger.error(f"Erro executando web search: {e}")
+            return {"answer": "", "sources": []}
 
         if not results:
-            logger.info("Web search retornou vazio.")
-            return [], ""
+            logger.info("🌐 Web search retornou vazio.")
+            return {"answer": "", "sources": []}
 
         context_blocks = []
-        docs_metadata = []
+        sources = []
 
-        for item in results:
-            content = item.get("content", "")
-            url = item.get("url", "")
-            snippet = item.get("snippet", "")
+        for idx, item in enumerate(results):
 
-            bloco = f"WEB Result — URL: {url}\n{snippet}\n\n{content}"
+            url = (item.get("url") or "").strip()
+            snippet = (item.get("snippet") or "")[:300].strip()
+            content = (item.get("content") or "")[:1200].strip()
+
+            bloco = (
+                f"WEB RESULTADO {idx+1}\n"
+                f"URL: {url}\n\n"
+                f"{snippet}\n\n"
+                f"{content}"
+            )
+
             context_blocks.append(bloco)
 
-            docs_metadata.append({
+            sources.append({
                 "source": "WEB",
                 "url": url,
-                "page": None,
+                "chunk_index": idx,
                 "document_type": "WEB",
-                "chunk_index": len(docs_metadata)
             })
 
-        contexto = "\n---\n".join(context_blocks)
-        return docs_metadata, contexto
+        final_context = "\n\n---\n\n".join(context_blocks)
+        return {"answer": final_context, "sources": sources}
 
-    except Exception as e:
-        logger.error(f"Erro executando Tavily Search: {e}")
-        return [], ""
+
+def build_web_tool(api_key: str) -> WebSearch:
+    """
+    Função auxiliar usada em app_web e no LangGraph.
+    """
+    return WebSearch(api_key=api_key)
