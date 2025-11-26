@@ -1,45 +1,33 @@
+# graph/nodes.py
+
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from utils.logs import logger
+
+from protocol import ConsultaContext
+from mcp_converters import convert_sources
+from prompts.hierarchy import montar_prompt_mestre
 
 from rag.pipeline import HybridRAGPipeline
 from rag.web import WebSearch
 
-from protocol import ConsultaContext
-from mcp_converters import convert_sources
-from prompt_hierarchy import montar_prompt_mestre
-
-
-# ============================================================
-# NODE 01 — RAG (pipeline híbrido: Qdrant → Vetorial → LLM-Judge)
-# ============================================================
 
 def node_rag_qdrant(state, retriever: HybridRAGPipeline):
     """
-    Executa pipeline completo de RAG híbrido:
-    Qdrant → reranking vetorial → reranking LLM.
-    Retorna novo estado contendo:
-      - contexto_juridico_bruto
-      - sources_data
-      - rag_ok
+    Executa o pipeline RAG híbrido completo:
+    Qdrant → Reranking Vetorial → LLM‑as‑Judge.
     """
-
     pergunta = state.get("ultima_pergunta", "")
     perfil = state.get("perfil_cliente", "")
 
-    logger.info("🔎 NODE_RAG — iniciando pipeline híbrido...")
-
     try:
         fontes, contexto = retriever.run(pergunta, perfil)
-
         return {
             "contexto_juridico_bruto": contexto or "",
             "sources_data": fontes or [],
-            "rag_ok": bool((contexto or "").strip()),
+            "rag_ok": bool(contexto.strip()),
         }
-
     except Exception as e:
-        logger.error(f"❌ [NODE_RAG] Erro no pipeline híbrido: {e}")
-
+        logger.error(f"[NODE_RAG] Erro interno: {e}")
         return {
             "contexto_juridico_bruto": "",
             "sources_data": [],
@@ -47,84 +35,35 @@ def node_rag_qdrant(state, retriever: HybridRAGPipeline):
         }
 
 
-
-# ============================================================
-# NODE 02 — WEB SEARCH (fallback quando RAG não é suficiente)
-# ============================================================
-
 def node_web_search(state, web_tool: WebSearch):
     """
-    Executa WebSearch somente quando:
-    - RAG falhou (rag_ok=False)
-    - OU o roteador indicou caminho WEB
-
-    Retorna:
-      - contexto_juridico_bruto
-      - sources_data
-      - rag_ok
+    WebSearch como fallback (casos que o Router indica WEB ou quando o RAG falha).
     """
-
-    if state.get("rag_ok"):   # RAG já resolveu → skip
-        logger.info("🌐 NODE_WEB — ignorado (RAG já encontrou resposta)")
+    if state.get("rag_ok"):
         return {}
 
-    pergunta = state.get("ultima_pergunta", "")
-
-    logger.info("🌐 NODE_WEB — executando Tavily WebSearch...")
-
-    result = web_tool.execute(pergunta)
-
-    contexto = result.get("answer", "") or ""
-    fontes = result.get("sources", []) or []
+    result = web_tool.execute(state.get("ultima_pergunta", ""))
 
     return {
-        "contexto_juridico_bruto": contexto,
-        "sources_data": fontes,
-        "rag_ok": bool(contexto.strip()),
+        "contexto_juridico_bruto": result.get("answer", ""),
+        "sources_data": result.get("sources", []),
+        "rag_ok": bool(result.get("answer", "").strip()),
     }
 
 
-
-# ============================================================
-# NODE 03 — GERADOR FINAL (MCP + Prompt Hierárquico + Resposta do LLM)
-# ============================================================
-
 def node_generate_final(state, llm):
     """
-    Node final:
-      1. Constrói o MCP (Model Context Protocol)
-      2. Converte fontes do RAG/WEB para FonteDocumento
-      3. Gera prompt hierárquico profissional
-      4. Invoca LLM com system prompt robusto
-      5. Retorna mensagem gerada e atualiza o histórico
+    Monta o MCP, aplica o Prompt Hierárquico SOP e gera a resposta final.
     """
-
-    logger.info("🧠 NODE_FINAL — Montando MCP e gerando resposta final...")
-
     pergunta = state.get("ultima_pergunta", "")
     perfil = state.get("perfil_cliente", "")
     contexto = state.get("contexto_juridico_bruto", "")
     fontes_raw = state.get("sources_data", [])
     historico = list(state.get("messages", []))
 
-    # --------------------------------------------------------
-    # 1) Converter fontes → MCP FonteDocumento
-    # --------------------------------------------------------
     fontes = convert_sources(fontes_raw)
+    prompt_mestre = montar_prompt_mestre(pergunta, perfil, contexto, fontes)
 
-    # --------------------------------------------------------
-    # 2) Criar prompt hierárquico
-    # --------------------------------------------------------
-    prompt_mestre = montar_prompt_mestre(
-        pergunta=pergunta,
-        perfil=perfil,
-        contexto=contexto,
-        fontes=fontes
-    )
-
-    # --------------------------------------------------------
-    # 3) Construir MCP consolidado
-    # --------------------------------------------------------
     mcp = ConsultaContext(
         trace_id=None,
         perfil_cliente=perfil,
@@ -134,17 +73,11 @@ def node_generate_final(state, llm):
         prompt_mestre=prompt_mestre,
     )
 
-    # --------------------------------------------------------
-    # 4) Invocar LLM (system + human)
-    # --------------------------------------------------------
     resposta = llm.invoke([
         SystemMessage(content=mcp.prompt_mestre),
-        HumanMessage(content="Gere a resposta final seguindo rigorosamente as instruções acima.")
+        HumanMessage(content="Gere a resposta final seguindo estritamente as instruções.")
     ])
 
-    # --------------------------------------------------------
-    # 5) Atualizar histórico
-    # --------------------------------------------------------
     historico.append(AIMessage(content=resposta.content))
 
     return {"messages": historico}

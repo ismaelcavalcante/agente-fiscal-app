@@ -1,3 +1,5 @@
+# graph/builder.py
+
 from langgraph.graph import StateGraph, END
 from typing import TypedDict, Any
 from functools import partial
@@ -17,17 +19,13 @@ class GraphState(TypedDict, total=False):
     __route__: str
 
 
-def build_graph(llm, rag_pipeline, web_tool):
-    """
-    Constrói o grafo principal da aplicação.
-    """
-
-    logger.info("⚙️ Construindo LangGraph...")
+def build_graph(llm, retriever, web_tool):
+    logger.info("⛓️ Construindo LangGraph...")
 
     workflow = StateGraph(GraphState)
 
     workflow.add_node("router", node_router)
-    workflow.add_node("rag_qdrant", partial(node_rag_qdrant, retriever=rag_pipeline))
+    workflow.add_node("rag_qdrant", partial(node_rag_qdrant, retriever=retriever))
     workflow.add_node("web_search", partial(node_web_search, web_tool=web_tool))
     workflow.add_node("generate_final", partial(node_generate_final, llm=llm))
 
@@ -44,5 +42,6 @@ def build_graph(llm, rag_pipeline, web_tool):
     workflow.add_edge("generate_final", END)
 
     graph = workflow.compile()
-    logger.info("🧠 LangGraph compilado com sucesso.")
+    logger.info("🧠 Grafo compilado.")
+
     return graph
