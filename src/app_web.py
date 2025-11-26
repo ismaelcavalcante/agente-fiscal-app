@@ -102,7 +102,7 @@ retriever = QdrantRetriever(
     url=st.secrets["QDRANT_URL"],
     api_key=st.secrets["QDRANT_API_KEY"],
     collection="leis_fiscais_v1",
-    embedding_model="text-embedding-3-large",
+    embedding_model="text-embedding-3-small",
     openai_key=st.secrets["OPENAI_API_KEY"],
 )
 
