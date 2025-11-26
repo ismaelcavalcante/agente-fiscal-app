@@ -1,5 +1,6 @@
-from qdrant_client import QdrantClient
-from qdrant_client.models import SearchParams
+# rag/qdrant.py
+
+from qdrant_client import QdrantClient, models
 from langchain_openai import OpenAIEmbeddings
 from utils.logs import logger
 
@@ -8,8 +9,8 @@ class QdrantRetriever:
 
     def __init__(self, url, api_key, collection, embedding_model, openai_key):
         self.client = QdrantClient(url=url, api_key=api_key)
-        self.embeddings = OpenAIEmbeddings(model=embedding_model, api_key=openai_key)
         self.collection = collection
+        self.embeddings = OpenAIEmbeddings(model=embedding_model, api_key=openai_key)
 
     def embed_query(self, text: str):
         return self.embeddings.embed_query(text)
@@ -17,31 +18,40 @@ class QdrantRetriever:
     def query(self, text: str, perfil: str, limit=12):
         enriched = f"{text}\n\nPerfil: {perfil}"
         logger.info("🔎 Gerando embedding para RAG...")
-        query_vector = self.embed_query(enriched)
 
         try:
-            results = self.client.search(
+            vector = self.embed_query(enriched)
+        except Exception as e:
+            logger.error(f"Erro ao gerar embedding: {e}")
+            return []
+
+        try:
+            results = self.client.query_points(
                 collection_name=self.collection,
-                query_vector=query_vector,
+                query=vector,
+                query_filter=None,
+                search_params=models.SearchParams(
+                    hnsw_ef=128,
+                    exact=False
+                ),
                 limit=limit,
                 with_payload=True,
-                with_vectors=False,
-                search_params=SearchParams(hnsw_ef=128, exact=False),
+                with_vectors=False
             )
         except Exception as e:
             logger.error(f"[RAG] Erro ao consultar Qdrant: {e}")
             raise
 
         docs = []
-        for i, point in enumerate(results):
+        for i, point in enumerate(results.points):
             payload = point.payload or {}
-            text = payload.get("page_content", "") or ""
+            text = payload.get("page_content", "")
 
             docs.append({
                 "index": i,
                 "page_content": text,
-                "metadata": payload,
+                "metadata": payload
             })
 
-        logger.info(f"🔎 Qdrant retornou {len(docs)} documentos (pré‑reranking).")
+        logger.info(f"🔎 Qdrant retornou {len(docs)} documentos.")
         return docs
