@@ -89,7 +89,7 @@ sanitize_history()
 # Inicializar LLM
 # ===========================
 llm = ChatOpenAI(
-    model="gpt-4o-mini",
+    model="gpt-4o",
     api_key=st.secrets["OPENAI_API_KEY"],
     temperature=0.1
 )
