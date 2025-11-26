@@ -29,6 +29,7 @@ class QdrantRetriever:
             results = self.client.query_points(
                 collection_name=self.collection,
                 query=vector,
+                vector_name="default",
                 query_filter=None,
                 search_params=models.SearchParams(
                     hnsw_ef=128,
